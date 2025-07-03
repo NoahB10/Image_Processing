@@ -164,29 +164,79 @@ class DualCameraFisheyeDistortionCorrectionV4:
         }
         
     def load_dng_image(self, filepath, to_grayscale=True):
-        """Load DNG image using rawpy"""
+        """Load image file using rawpy for DNG files or losa.load_image for other formats"""
+        file_ext = os.path.splitext(filepath)[1].lower()
+        
+        # Try to load as DNG/RAW file first if it has a RAW extension
+        if file_ext in ['.dng', '.cr2', '.nef', '.arw', '.orf', '.raf', '.rw2']:
+            try:
+                print(f"Loading DNG/RAW file: {os.path.basename(filepath)}")
+                raw = rawpy.imread(filepath)
+                rgb = raw.postprocess(
+                    use_camera_wb=True,
+                    half_size=False,
+                    no_auto_bright=False,
+                    output_bps=16,
+                    output_color=rawpy.ColorSpace.sRGB,
+                )
+                
+                if to_grayscale:
+                    # Convert to grayscale for distortion analysis
+                    gray = np.mean(rgb, axis=2).astype(np.uint16)
+                    print(f"   Converted to grayscale: {gray.shape}, range: [{gray.min()}, {gray.max()}]")
+                    return gray, rgb
+                else:
+                    print(f"   Loaded RGB: {rgb.shape}, range: [{rgb.min()}, {rgb.max()}]")
+                    return rgb, rgb
+                    
+            except Exception as e:
+                print(f"[WARNING] Failed to load as RAW file {filepath}: {e}")
+                print("[INFO] Attempting to load as regular image file...")
+        
+        # Fallback: load as regular image file (JPEG, PNG, TIFF, etc.) using losa
         try:
-            print(f"Loading DNG file: {os.path.basename(filepath)}")
-            raw = rawpy.imread(filepath)
-            rgb = raw.postprocess(
-                use_camera_wb=True,
-                half_size=False,
-                no_auto_bright=False,
-                output_bps=16,
-                output_color=rawpy.ColorSpace.sRGB,
-            )
+            print(f"Loading image file: {os.path.basename(filepath)}")
+            # Load image using losa (can handle various formats)
+            rgb = losa.load_image(filepath, average=False)
             
-            if to_grayscale:
-                # Convert to grayscale for distortion analysis
-                gray = np.mean(rgb, axis=2).astype(np.uint16)
-                print(f"   Converted to grayscale: {gray.shape}, range: [{gray.min()}, {gray.max()}]")
-                return gray, rgb
+            # Handle different image formats and bit depths
+            if rgb.ndim == 2:
+                # Grayscale image
+                if to_grayscale:
+                    gray = rgb.astype(np.uint16) if rgb.dtype != np.uint16 else rgb
+                    print(f"   Loaded grayscale: {gray.shape}, range: [{gray.min()}, {gray.max()}]")
+                    return gray, np.stack([rgb, rgb, rgb], axis=2)  # Create RGB version for compatibility
+                else:
+                    rgb_version = np.stack([rgb, rgb, rgb], axis=2)
+                    print(f"   Loaded grayscale as RGB: {rgb_version.shape}, range: [{rgb_version.min()}, {rgb_version.max()}]")
+                    return rgb_version, rgb_version
+            elif rgb.ndim == 3:
+                # Color image
+                # Ensure consistent data type
+                if rgb.dtype == np.uint8:
+                    # Convert 8-bit to 16-bit for consistency with DNG processing
+                    rgb = (rgb.astype(np.uint16) * 256)
+                elif rgb.dtype == np.float32 or rgb.dtype == np.float64:
+                    # Normalize float to 16-bit
+                    if rgb.max() <= 1.0:
+                        rgb = (rgb * 65535).astype(np.uint16)
+                    else:
+                        rgb = (rgb / rgb.max() * 65535).astype(np.uint16)
+                
+                if to_grayscale:
+                    # Convert to grayscale for distortion analysis
+                    gray = np.mean(rgb, axis=2).astype(np.uint16)
+                    print(f"   Converted to grayscale: {gray.shape}, range: [{gray.min()}, {gray.max()}]")
+                    return gray, rgb
+                else:
+                    print(f"   Loaded RGB: {rgb.shape}, range: [{rgb.min()}, {rgb.max()}]")
+                    return rgb, rgb
             else:
-                print(f"   Loaded RGB: {rgb.shape}, range: [{rgb.min()}, {rgb.max()}]")
-                return rgb, rgb
-            
+                print(f"[ERROR] Unsupported image dimensions: {rgb.shape}")
+                return None, None
+                
         except Exception as e:
-            print(f"[ERROR] Failed to load DNG file {filepath}: {e}")
+            print(f"[ERROR] Failed to load image file {filepath}: {e}")
             return None, None
     
     def crop_image(self, image, cam_name):
