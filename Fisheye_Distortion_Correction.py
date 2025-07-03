@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 """
-Image Post-Processing Script for IMX708 Dual Camera System (v1.1)
+Image Post-Processing Script for IMX708 Dual Camera System (v1.2)
 
-This script processes DNG files captured by the dual camera system:
-- Loads DNG files from both cameras (left and right)
+This script processes image files captured by the dual camera system:
+- Loads DNG files from both cameras (left and right) with fallback to generic formats
+- Supports JPEG, PNG, TIFF, BMP, and other common image formats
 - Applies camera-specific cropping (optional)
 - Applies camera-specific distortion correction (optional)
 - Applies perspective correction (optional)
 - Saves as JPEG, TIFF, or PNG with quality settings
 
-Version 1.1 Improvements:
+Version 1.2 Improvements:
+- Added fallback support for generic image formats (JPEG, PNG, TIFF, BMP, etc.)
+- Enhanced error handling with graceful degradation from DNG to generic formats
+- Updated GUI to support broader file type selection
 - Fixed TIFF saving issues by using imageio for reliable TIFF output
 - Improved DNG loading with better color space handling
 - Enhanced distortion correction with better error handling
@@ -114,8 +118,8 @@ class DualImagePostProcessor:
                     print(f"[WARNING] Failed to load coefficients from {alt_coeff_file}: {e}")
                     print("[INFO] Using default distortion coefficients")
 
-    def load_dng_image(self, filepath):
-        """Load DNG image using rawpy with improved approach"""
+    def load_image(self, filepath):
+        """Load image file with DNG support and fallback to generic formats"""
         try:
             # Load and process DNG using the improved approach
             raw = rawpy.imread(filepath)
@@ -132,8 +136,33 @@ class DualImagePostProcessor:
             print(f"   Range: [{rgb.min()}, {rgb.max()}]")
             return rgb
         except Exception as e:
-            print(f"[ERROR] Failed to load DNG file {filepath}: {e}")
-            return None
+            print(f"[WARNING] Failed to load as DNG: {os.path.basename(filepath)} - {e}")
+            print(f"[INFO] Attempting to load as generic image format...")
+            
+            # Fallback: Try to load as generic image format using OpenCV
+            try:
+                # OpenCV loads images in BGR format
+                image = cv2.imread(filepath, cv2.IMREAD_UNCHANGED)
+                
+                if image is None:
+                    print(f"[ERROR] Failed to load image with OpenCV: {os.path.basename(filepath)}")
+                    return None
+                
+                # Convert BGR to RGB if it's a color image
+                if len(image.shape) == 3 and image.shape[2] == 3:
+                    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                elif len(image.shape) == 3 and image.shape[2] == 4:
+                    # Handle RGBA images
+                    image = cv2.cvtColor(image, cv2.COLOR_BGRA2RGBA)
+                
+                print(f"[SUCCESS] Loaded generic image: {os.path.basename(filepath)}")
+                print(f"   Shape: {image.shape}, dtype: {image.dtype}")
+                print(f"   Range: [{image.min()}, {image.max()}]")
+                return image
+                
+            except Exception as fallback_error:
+                print(f"[ERROR] Failed to load image with fallback method: {os.path.basename(filepath)} - {fallback_error}")
+                return None
 
     def crop_image(self, image, cam_name):
         """Crop image according to camera-specific parameters"""
@@ -385,8 +414,8 @@ class DualImagePostProcessor:
         print(f"   Right (cam1): {os.path.basename(right_path)}")
         
         # Load both images
-        left_image = self.load_dng_image(left_path)
-        right_image = self.load_dng_image(right_path)
+        left_image = self.load_image(left_path)
+        right_image = self.load_image(right_path)
         
         if left_image is None or right_image is None:
             print("[ERROR] Failed to load one or both images")
@@ -486,20 +515,21 @@ class DualImagePostProcessor:
         # Create output directory if it doesn't exist
         os.makedirs(output_directory, exist_ok=True)
         
-        # Find all DNG files
-        dng_files = []
+        # Find all image files
+        image_files = []
+        image_extensions = ['.dng', '.jpg', '.jpeg', '.png', '.tiff', '.tif', '.bmp']
         for file in os.listdir(input_directory):
-            if file.lower().endswith('.dng'):
-                dng_files.append(file)
+            if any(file.lower().endswith(ext) for ext in image_extensions):
+                image_files.append(file)
         
-        if not dng_files:
-            print(f"[WARNING] No DNG files found in {input_directory}")
+        if not image_files:
+            print(f"[WARNING] No image files found in {input_directory}")
             return
         
         # Group files by timestamp or common identifier
         pairs = []
-        left_files = [f for f in dng_files if 'cam0' in f.lower() or 'left' in f.lower()]
-        right_files = [f for f in dng_files if 'cam1' in f.lower() or 'right' in f.lower()]
+        left_files = [f for f in image_files if 'cam0' in f.lower() or 'left' in f.lower()]
+        right_files = [f for f in image_files if 'cam1' in f.lower() or 'right' in f.lower()]
         
         print(f"[INFO] Found {len(left_files)} left images and {len(right_files)} right images")
         
@@ -615,7 +645,7 @@ class DualImagePostProcessor:
         file_frame.grid(row=1, column=0, columnspan=2, sticky=(tk.W, tk.E), pady=(0, 10))
         
         # Dual image processing
-        ttk.Button(file_frame, text="Process Left + Right DNG Pair", 
+        ttk.Button(file_frame, text="Process Left + Right Image Pair", 
                   command=self.gui_process_dual).grid(row=0, column=0, sticky=(tk.W, tk.E), pady=2)
         
         # Batch processing
@@ -623,7 +653,7 @@ class DualImagePostProcessor:
                   command=self.gui_process_batch).grid(row=1, column=0, sticky=(tk.W, tk.E), pady=2)
         
         # Single image processing (legacy)
-        ttk.Button(file_frame, text="Process Single DNG File", 
+        ttk.Button(file_frame, text="Process Single Image File", 
                   command=self.gui_process_single).grid(row=2, column=0, sticky=(tk.W, tk.E), pady=2)
         
         # Current parameters display
@@ -648,6 +678,9 @@ class DualImagePostProcessor:
         
         ttk.Button(buttons_frame, text="Reload Distortion Coefficients", 
                   command=self.reload_coefficients).pack(side=tk.LEFT, padx=(0, 10))
+        
+        ttk.Button(buttons_frame, text="Load Parameters from File", 
+                  command=self.update_gui_from_params).pack(side=tk.LEFT, padx=(0, 10))
         
         ttk.Button(buttons_frame, text="Exit", 
                   command=root.quit).pack(side=tk.RIGHT)
@@ -684,7 +717,9 @@ class DualImagePostProcessor:
                 cam_label = "Left" if cam == "cam0" else "Right"
                 pers_coef = params.get('pers_coef')
                 if pers_coef is not None:
-                    self.params_text.insert(tk.END, f"  {cam} ({cam_label}): Available ({len(pers_coef)} coefficients)\n")
+                    # Format perspective coefficients to 4 decimal points
+                    formatted_coeffs = [f"{coeff:.4f}" for coeff in pers_coef]
+                    self.params_text.insert(tk.END, f"  {cam} ({cam_label}): {formatted_coeffs}\n")
                 else:
                     self.params_text.insert(tk.END, f"  {cam} ({cam_label}): Not available\n")
     
@@ -706,8 +741,8 @@ class DualImagePostProcessor:
         
         # Select left image
         left_file = filedialog.askopenfilename(
-            title="Select LEFT camera DNG file (cam0)",
-            filetypes=[("DNG files", "*.dng"), ("All files", "*.*")]
+            title="Select LEFT camera image file (cam0)",
+            filetypes=[("DNG files", "*.dng"), ("Image files", "*.jpg *.jpeg *.png *.tiff *.tif *.bmp"), ("All files", "*.*")]
         )
         
         if not left_file:
@@ -715,8 +750,8 @@ class DualImagePostProcessor:
         
         # Select right image
         right_file = filedialog.askopenfilename(
-            title="Select RIGHT camera DNG file (cam1)",
-            filetypes=[("DNG files", "*.dng"), ("All files", "*.*")]
+            title="Select RIGHT camera image file (cam1)",
+            filetypes=[("DNG files", "*.dng"), ("Image files", "*.jpg *.jpeg *.png *.tiff *.tif *.bmp"), ("All files", "*.*")]
         )
         
         if not right_file:
@@ -747,8 +782,8 @@ class DualImagePostProcessor:
         
         # Select input file
         input_file = filedialog.askopenfilename(
-            title="Select DNG file to process",
-            filetypes=[("DNG files", "*.dng"), ("All files", "*.*")]
+            title="Select image file to process",
+            filetypes=[("DNG files", "*.dng"), ("Image files", "*.jpg *.jpeg *.png *.tiff *.tif *.bmp"), ("All files", "*.*")]
         )
         
         if not input_file:
@@ -800,8 +835,8 @@ class DualImagePostProcessor:
         """Process a single DNG image (legacy method)"""
         print(f"\n[INFO] Processing single image: {os.path.basename(input_path)} as {cam_name}")
         
-        # Load the DNG image
-        image = self.load_dng_image(input_path)
+        # Load the image
+        image = self.load_image(input_path)
         if image is None:
             return False
         
@@ -850,7 +885,7 @@ class DualImagePostProcessor:
             return
         
         # Select input directory
-        input_dir = filedialog.askdirectory(title="Select directory containing DNG file pairs")
+        input_dir = filedialog.askdirectory(title="Select directory containing image file pairs")
         if not input_dir:
             return
         
@@ -867,7 +902,95 @@ class DualImagePostProcessor:
         """Reload distortion coefficients and update display"""
         self.load_distortion_coefficients()
         self.update_params_display()
-        messagebox.showinfo("Coefficients Reloaded", "Distortion coefficients have been reloaded from file.")
+        self.update_gui_from_params()
+        messagebox.showinfo("Coefficients Reloaded", "Distortion coefficients have been reloaded from file and GUI updated.")
+    
+    def update_gui_from_params(self):
+        """Update GUI fields with current parameter values"""
+        # Prompt user to select distortion coefficients file
+        coeff_file = filedialog.askopenfilename(
+            title="Select distortion coefficients file",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            initialfile="distortion_coefficients_dual.json"
+        )
+        
+        if not coeff_file:
+            messagebox.showinfo("Cancelled", "No file selected. Parameters not updated.")
+            return
+        
+        try:
+            # Load the selected coefficients file
+            with open(coeff_file, 'r') as f:
+                loaded_params = json.load(f)
+            
+            # Update distortion parameters with loaded data
+            for cam in ['cam0', 'cam1']:
+                if cam in loaded_params:
+                    if cam not in self.distortion_params:
+                        self.distortion_params[cam] = {}
+                    
+                    # Update all available parameters
+                    for key in ['xcenter', 'ycenter', 'coeffs', 'pers_coef']:
+                        if key in loaded_params[cam]:
+                            self.distortion_params[cam][key] = loaded_params[cam][key]
+                            if key == 'pers_coef':
+                                print(f"[INFO] Loaded perspective coefficients for {cam}: {len(loaded_params[cam][key])} coefficients")
+                            elif key == 'coeffs':
+                                print(f"[INFO] Loaded distortion coefficients for {cam}: {loaded_params[cam][key]}")
+                            else:
+                                print(f"[INFO] Loaded {key} for {cam}: {loaded_params[cam][key]}")
+            
+            # Update cropping parameters if available in the file
+            if 'crop_params' in loaded_params:
+                self.crop_params.update(loaded_params['crop_params'])
+            
+            # Update rotation angle if available
+            if 'left_rotation_angle' in loaded_params:
+                self.left_rotation_angle = loaded_params['left_rotation_angle']
+            
+            # Update the GUI display
+            self.update_params_display()
+            
+            # Update GUI fields if they exist
+            if hasattr(self, 'crop_left_width_var'):
+                # Update cropping parameters
+                self.crop_left_width_var.set(self.crop_params['cam0']['width'])
+                self.crop_left_height_var.set(self.crop_params['cam0']['height'])
+                self.crop_left_startx_var.set(self.crop_params['cam0']['start_x'])
+                self.crop_right_width_var.set(self.crop_params['cam1']['width'])
+                self.crop_right_height_var.set(self.crop_params['cam1']['height'])
+                self.crop_right_startx_var.set(self.crop_params['cam1']['start_x'])
+            
+            if hasattr(self, 'dist_left_centerx_var'):
+                # Update distortion parameters
+                self.dist_left_centerx_var.set(self.distortion_params['cam0']['xcenter'])
+                self.dist_left_centery_var.set(self.distortion_params['cam0']['ycenter'])
+                self.dist_left_coeffs_var.set(str(self.distortion_params['cam0']['coeffs']))
+                self.dist_right_centerx_var.set(self.distortion_params['cam1']['xcenter'])
+                self.dist_right_centery_var.set(self.distortion_params['cam1']['ycenter'])
+                self.dist_right_coeffs_var.set(str(self.distortion_params['cam1']['coeffs']))
+            
+            if hasattr(self, 'rotation_angle_var'):
+                # Update rotation angle
+                self.rotation_angle_var.set(self.left_rotation_angle)
+            
+            # Check if perspective coefficients were loaded
+            pers_coef_loaded = False
+            for cam in ['cam0', 'cam1']:
+                if cam in self.distortion_params and 'pers_coef' in self.distortion_params[cam]:
+                    if self.distortion_params[cam]['pers_coef'] is not None:
+                        pers_coef_loaded = True
+                        break
+            
+            success_msg = f"Parameters updated from: {os.path.basename(coeff_file)}"
+            if pers_coef_loaded:
+                success_msg += "\n\nPerspective correction coefficients loaded and available for use."
+            
+            messagebox.showinfo("Success", success_msg)
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to load parameters from file:\n{str(e)}")
+            print(f"[ERROR] Failed to load parameters from {coeff_file}: {e}")
 
 def main():
     parser = argparse.ArgumentParser(description="Post-process DNG image pairs from IMX708 dual camera system")
