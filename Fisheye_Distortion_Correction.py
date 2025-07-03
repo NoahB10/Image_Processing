@@ -675,9 +675,7 @@ class DualImagePostProcessor:
         # Buttons frame
         buttons_frame = ttk.Frame(main_frame)
         buttons_frame.grid(row=3, column=0, columnspan=2, pady=(10, 0))
-        
-        ttk.Button(buttons_frame, text="Reload Distortion Coefficients", 
-                  command=self.reload_coefficients).pack(side=tk.LEFT, padx=(0, 10))
+    
         
         ttk.Button(buttons_frame, text="Load Parameters from File", 
                   command=self.update_gui_from_params).pack(side=tk.LEFT, padx=(0, 10))
