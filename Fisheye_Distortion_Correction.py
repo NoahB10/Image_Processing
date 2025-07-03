@@ -11,7 +11,7 @@ This script processes image files captured by the dual camera system:
 - Saves as JPEG, TIFF, or PNG with quality settings
 
 Version 1.2 Improvements:
-- Added fallback support for generic image formats (JPEG, PNG, TIFF, BMP, etc.)
+- Added fallback support for generic image formats (JPEG, PNG, TIFF, BMP, etc..)
 - Enhanced error handling with graceful degradation from DNG to generic formats
 - Updated GUI to support broader file type selection
 - Fixed TIFF saving issues by using imageio for reliable TIFF output
