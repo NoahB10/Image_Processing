@@ -9,7 +9,7 @@ from PIL import Image
 #there is a threshold which can be modified or removed depending on if it is determined necessary the threshold helps with finding organoids.
 
 class MaskCropper:
-    def __init__(self, input_image_path, mask_path, output_folder="Well_Crops", target_size=(600, 600)):
+    def __init__(self, input_image_path, mask_path, output_folder="Well_Crops", target_size=(512, 512)):
         """
         Initialize the MaskCropper
         
