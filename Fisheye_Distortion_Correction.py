@@ -579,7 +579,7 @@ class DualImagePostProcessor:
         """Create a GUI for dual image processing"""
         root = tk.Tk()
         root.title("Dual Camera DNG Post-Processor")
-        root.geometry("700x600")
+        root.geometry("700x700")
         
         # Main frame
         main_frame = ttk.Frame(root, padding="10")
