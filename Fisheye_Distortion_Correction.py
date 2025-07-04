@@ -314,6 +314,8 @@ class DualImagePostProcessor:
                                    borderMode=cv2.BORDER_REFLECT_101)
             
             print(f"[INFO] Applied {self.left_rotation_angle}° rotation to left image")
+            print(f"   Rotation center: ({center[0]}, {center[1]})")
+            print(f"   Image dimensions: {width}x{height}")
             return rotated
             
         except Exception as e:
@@ -604,10 +606,47 @@ class DualImagePostProcessor:
         ttk.Checkbutton(options_frame, text="Apply Perspective Correction", 
                        variable=self.perspective_var).grid(row=2, column=0, sticky=tk.W)
         
-        # Left rotation checkbox
+        # Left rotation checkbox and angle input
         self.left_rotation_var = tk.BooleanVar(value=self.apply_left_rotation)
         ttk.Checkbutton(options_frame, text="Apply Left Image Rotation", 
                        variable=self.left_rotation_var).grid(row=3, column=0, sticky=tk.W)
+        
+        # Rotation angle input frame
+        rotation_frame = ttk.Frame(options_frame)
+        rotation_frame.grid(row=3, column=1, sticky=tk.W, padx=(10, 0))
+        
+        ttk.Label(rotation_frame, text="Angle (degrees):").pack(side=tk.LEFT)
+        self.rotation_angle_var = tk.DoubleVar(value=self.left_rotation_angle)
+        rotation_entry = ttk.Entry(rotation_frame, textvariable=self.rotation_angle_var, width=8)
+        rotation_entry.pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Status label to show current rotation angle
+        self.rotation_status_label = ttk.Label(rotation_frame, text=f"({self.left_rotation_angle}°)", 
+                                              foreground="blue", font=("TkDefaultFont", 8))
+        self.rotation_status_label.pack(side=tk.LEFT, padx=(5, 0))
+        
+        # Add validation to ensure numeric input and update status
+        def validate_rotation_angle(*args):
+            try:
+                value = self.rotation_angle_var.get()
+                # Update status label
+                self.rotation_status_label.config(text=f"({value}°)")
+                return True
+            except tk.TclError:
+                return False
+        
+        rotation_entry.config(validate='focusout', validatecommand=validate_rotation_angle)
+        
+        # Also update status when checkbox changes
+        def update_rotation_status(*args):
+            if self.left_rotation_var.get():
+                angle = self.rotation_angle_var.get()
+                self.rotation_status_label.config(text=f"({angle}°)", foreground="green")
+            else:
+                self.rotation_status_label.config(text="(disabled)", foreground="gray")
+        
+        self.left_rotation_var.trace_add('write', update_rotation_status)
+        self.rotation_angle_var.trace_add('write', update_rotation_status)
         
         # Output options
         self.individual_var = tk.BooleanVar(value=self.save_individual)
@@ -720,6 +759,10 @@ class DualImagePostProcessor:
                     self.params_text.insert(tk.END, f"  {cam} ({cam_label}): {formatted_coeffs}\n")
                 else:
                     self.params_text.insert(tk.END, f"  {cam} ({cam_label}): Not available\n")
+        
+        # Display rotation angle
+        self.params_text.insert(tk.END, f"\nLeft Image Rotation:\n")
+        self.params_text.insert(tk.END, f"  Angle: {self.left_rotation_angle}°\n")
     
     def gui_process_dual(self):
         """GUI handler for dual image processing"""
@@ -728,6 +771,7 @@ class DualImagePostProcessor:
         self.enable_distortion_correction = self.distortion_var.get()
         self.enable_perspective_correction = self.perspective_var.get()
         self.apply_left_rotation = self.left_rotation_var.get()
+        self.left_rotation_angle = self.rotation_angle_var.get()  # Get user input angle
         self.save_individual = self.individual_var.get()
         self.save_combined = self.combined_var.get()
         self.output_format = self.format_var.get()
@@ -775,6 +819,7 @@ class DualImagePostProcessor:
         self.enable_distortion_correction = self.distortion_var.get()
         self.enable_perspective_correction = self.perspective_var.get()
         self.apply_left_rotation = self.left_rotation_var.get()
+        self.left_rotation_angle = self.rotation_angle_var.get()  # Get user input angle
         self.output_format = self.format_var.get()
         self.jpeg_quality = self.quality_var.get()
         
@@ -873,6 +918,7 @@ class DualImagePostProcessor:
         self.enable_distortion_correction = self.distortion_var.get()
         self.enable_perspective_correction = self.perspective_var.get()
         self.apply_left_rotation = self.left_rotation_var.get()
+        self.left_rotation_angle = self.rotation_angle_var.get()  # Get user input angle
         self.save_individual = self.individual_var.get()
         self.save_combined = self.combined_var.get()
         self.output_format = self.format_var.get()
@@ -948,6 +994,16 @@ class DualImagePostProcessor:
             
             # Update the GUI display
             self.update_params_display()
+            
+            # Update rotation angle in GUI if the field exists
+            if hasattr(self, 'rotation_angle_var'):
+                self.rotation_angle_var.set(self.left_rotation_angle)
+                # Update status label if it exists
+                if hasattr(self, 'rotation_status_label'):
+                    if self.left_rotation_var.get():
+                        self.rotation_status_label.config(text=f"({self.left_rotation_angle}°)", foreground="green")
+                    else:
+                        self.rotation_status_label.config(text="(disabled)", foreground="gray")
             
             # Update GUI fields if they exist
             if hasattr(self, 'crop_left_width_var'):
