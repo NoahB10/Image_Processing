@@ -13,19 +13,18 @@ from tkinter import filedialog, messagebox
 import cv2
 from matplotlib.path import Path
 
-# Dual Camera Fisheye Distortion Correction Script V4
-# Processes DNG files from both cameras (left and right)
+# Single Camera Fisheye Distortion Correction Script V4
+# Processes DNG files from a single camera
 # HAS POLYGON MASKING FUNCTION BUILT IN
 # Uses PROPER FISHEYE DOT PATTERN analysis following Discorpy_Fisheye_Example.py
 # SAVES BOTH RADIAL AND PERSPECTIVE COEFFICIENTS SEPARATELY (like V3)
 # Based on: Discorpy_Fisheye_Example.py workflow for dot patterns
 
-class DualCameraFisheyeDistortionCorrectionV4:
+class SingleCameraFisheyeDistortionCorrectionV4:
     def __init__(self):
         # Cropping parameters (from GUI_IMX708_Dirsotion_Correction_v1.1.py)
         self.crop_params = {
-            'cam0': {'width': 2070, 'start_x': 1260, 'height': 2592},  # Left camera
-            'cam1': {'width': 2050, 'start_x': 1400, 'height': 2592}   # Right camera
+            'cam0': {'width': 3950, 'start_x': 0, 'height': 3496}  # Single camera
         }
         
         # Processing parameters for PROPER FISHEYE DOT PATTERN analysis
@@ -38,11 +37,6 @@ class DualCameraFisheyeDistortionCorrectionV4:
                 'binarization_ratio': 0.8,  # Ratio for binarization
                 'size_distance_ratio': 0.3,  # Ratio for size/distance calculation
                 'slope_ratio': 0.3           # Ratio for slope calculation
-            },
-            'cam1': {
-                'binarization_ratio': 0.8,
-                'size_distance_ratio': 0.3,
-                'slope_ratio': 0.3
             }
         }
 
@@ -50,10 +44,6 @@ class DualCameraFisheyeDistortionCorrectionV4:
         self.dot_parameters = {
             'cam0': {
                 'dot_size': 30.0,  # Set to specific value or None to auto-calculate
-                'dot_dist': None   # Set to specific value or None to auto-calculate
-            },
-            'cam1': {
-                'dot_size': 30.0, # Set to specific value or None to auto-calculate  
                 'dot_dist': None   # Set to specific value or None to auto-calculate
             }
         }
@@ -83,31 +73,6 @@ class DualCameraFisheyeDistortionCorrectionV4:
                     (138.2, 403.4),
                     (176.1, 108.9)
                     ]
-            },
-            'cam1': {
-                'polygon_verts': [
-                    (2.0, 146.8),
-                    (330.2, 71.0),
-                    (679.5, 24.7),
-                    (940.3, 20.5),
-                    (1197.0, 24.7),
-                    (1378.0, 24.7),
-                    (1626.2, 50.0),
-                    (1798.7, 66.8),
-                    (1866.1, 386.6),
-                    (1916.6, 731.7),
-                    (1929.2, 1085.1),
-                    (1933.4, 1417.5),
-                    (1903.9, 1766.8),
-                    (1840.8, 2145.5),
-                    (1802.9, 2351.7),
-                    (1508.4, 2419.0),
-                    (1188.6, 2444.2),
-                    (835.1, 2452.6),
-                    (464.9, 2419.0),
-                    (6.2, 2339.0),
-                    (6.2, 151.0),
-                     ]
             }
         }
         
@@ -117,15 +82,8 @@ class DualCameraFisheyeDistortionCorrectionV4:
                 'ratio': 0.4,               # Grouping tolerance ratio (from example)
                 'num_dot_miss': 3,          # Number of missing dots allowed
                 'accepted_ratio': 0.65,     # Acceptance ratio for grouping
-                'order': 1,                 # Polynomial order for polyfit
+                'order': 2,                 # Polynomial order for polyfit
                 'residual_threshold': 20.0   # Residual threshold (from example)
-            },
-            'cam1': {
-                'ratio': 0.4,
-                'num_dot_miss': 3,
-                'accepted_ratio': 0.65,
-                'order': 1,
-                'residual_threshold': 20.0
             }
         }
         
@@ -133,7 +91,7 @@ class DualCameraFisheyeDistortionCorrectionV4:
         self.fisheye_params = {
             'vanishing_point_iterations': 2,  # Iterations for center finding
             'enable_perspective_correction': True,  # Apply perspective correction
-            'padding': 600  # Padding for unwarping
+            'padding': 400  # Padding for unwarping
         }
         
         # Perspective correction parameters (like V3)
@@ -153,16 +111,14 @@ class DualCameraFisheyeDistortionCorrectionV4:
         
         # Results storage
         self.results = {
-            'cam0': {'xcenter': None, 'ycenter': None, 'coeffs': None, 'pers_coef': None},
-            'cam1': {'xcenter': None, 'ycenter': None, 'coeffs': None, 'pers_coef': None}
+            'cam0': {'xcenter': None, 'ycenter': None, 'coeffs': None, 'pers_coef': None}
         }
         
         # Store processed data for comparison
         self.processed_data = {
-            'cam0': {},
-            'cam1': {}
+            'cam0': {}
         }
-        
+    
     def load_dng_image(self, filepath, to_grayscale=True):
         """Load image file using rawpy for DNG files or losa.load_image for other formats"""
         file_ext = os.path.splitext(filepath)[1].lower()
@@ -614,7 +570,7 @@ class DualCameraFisheyeDistortionCorrectionV4:
         try:
             xcenter, ycenter = proc.find_center_based_vanishing_points_iteration(
                 list_hor_lines, list_ver_lines, 
-                iteration=self.fisheye_params['vanishing_point_iterations'],method='median')
+                iteration=self.fisheye_params['vanishing_point_iterations'])
             print(f"      {cam_name}: Center of distortion: X={xcenter:.4f}, Y={ycenter:.4f}")
         except Exception as e:
             print(f"      Warning: Vanishing point method failed for {cam_name}, using coarse method: {e}")
@@ -628,6 +584,7 @@ class DualCameraFisheyeDistortionCorrectionV4:
                 corr_hor_lines, corr_ver_lines = proc.correct_perspective_effect(
                     list_hor_lines, list_ver_lines, xcenter, ycenter)
                 print(f"      {cam_name}: Perspective correction applied")
+               
             except Exception as e:
                 print(f"      Warning: Perspective correction failed for {cam_name}, using original lines: {e}")
                 corr_hor_lines, corr_ver_lines = list_hor_lines, list_ver_lines
@@ -635,6 +592,9 @@ class DualCameraFisheyeDistortionCorrectionV4:
             corr_hor_lines, corr_ver_lines = list_hor_lines, list_ver_lines
             print(f"      {cam_name}: Perspective correction skipped")
         
+           # Close the figure to free memory
+
+
         # Step 11: Calculate polynomial coefficients (following the example)
         print(f"      Step 11: Calculate radial distortion coefficients for {cam_name}...")
         try:
@@ -731,95 +691,72 @@ class DualCameraFisheyeDistortionCorrectionV4:
         
         return xcenter, ycenter, list_bfact
 
-    def process_both_cameras_parallel(self, left_image, right_image, output_base):
-        """Process both cameras using proper fisheye dot pattern workflow"""
-        print(f"\n=== Processing Both Cameras (Proper Fisheye Dot Pattern Workflow) ===")
+    def process_single_camera(self, image, output_dir):
+        """Process single camera using proper fisheye dot pattern workflow"""
+        print(f"\n=== Processing Single Camera (Proper Fisheye Dot Pattern Workflow) ===")
         
-        # Create output directories
-        cam0_output_dir = f"{output_base}_cam0"
-        cam1_output_dir = f"{output_base}_cam1"
-        os.makedirs(cam0_output_dir, exist_ok=True)
-        os.makedirs(cam1_output_dir, exist_ok=True)
+        # Create output directory
+        os.makedirs(output_dir, exist_ok=True)
         
-        # Save input images
-        self.save_jpeg_from_array(left_image, f"{cam0_output_dir}/00_input_cropped.jpg")
-        self.save_jpeg_from_array(right_image, f"{cam1_output_dir}/00_input_cropped.jpg")
+        # Save input image
+        self.save_jpeg_from_array(image, f"{output_dir}/00_input_cropped.jpg")
         
-        # Process each camera using the proper fisheye dot pattern workflow
-        results = {}
+        # Process camera using the proper fisheye dot pattern workflow
+        print(f"\n   Processing camera (cam0)...")
         
-        for cam_name, image, output_dir in [
-            ('cam0', left_image, cam0_output_dir),
-            ('cam1', right_image, cam1_output_dir)
-        ]:
-            cam_label = "Left" if cam_name == "cam0" else "Right"
-            print(f"\n   Processing {cam_label} camera ({cam_name})...")
-            
-            xcenter, ycenter, coeffs = self.process_fisheye_dot_pattern(image, cam_name, output_dir)
-            
-            results[cam_name] = {
+        xcenter, ycenter, coeffs = self.process_fisheye_dot_pattern(image, 'cam0', output_dir)
+        
+        results = {
+            'cam0': {
                 'xcenter': float(xcenter),
                 'ycenter': float(ycenter),
                 'coeffs': [float(c) for c in coeffs],
-                'pers_coef': [float(c) for c in self.results[cam_name]['pers_coef']] if self.results[cam_name]['pers_coef'] is not None else None,
-                'crop_params': self.crop_params[cam_name]
+                'pers_coef': [float(c) for c in self.results['cam0']['pers_coef']] if self.results['cam0']['pers_coef'] is not None else None,
+                'crop_params': self.crop_params['cam0']
             }
-            
-            self.results[cam_name]['xcenter'] = xcenter
-            self.results[cam_name]['ycenter'] = ycenter
-            self.results[cam_name]['coeffs'] = coeffs
+        }
+        
+        self.results['cam0']['xcenter'] = xcenter
+        self.results['cam0']['ycenter'] = ycenter
+        self.results['cam0']['coeffs'] = coeffs
         
         return results
 
-    def process_dual_cameras(self, left_dng_path, right_dng_path, output_base):
-        """Process both camera DNG files using proper fisheye dot pattern analysis"""
-        print("=== Dual Camera Fisheye Distortion Correction V4 (Proper Dot Pattern Workflow) ===")
-        print(f"Left DNG: {os.path.basename(left_dng_path)}")
-        print(f"Right DNG: {os.path.basename(right_dng_path)}")
+    def process_single_camera_file(self, dng_path, output_base):
+        """Process single camera DNG file using proper fisheye dot pattern analysis"""
+        print("=== Single Camera Fisheye Distortion Correction V4 (Proper Dot Pattern Workflow) ===")
+        print(f"DNG: {os.path.basename(dng_path)}")
         print(f"Output base: {output_base}")
         print("Following Discorpy_Fisheye_Example.py workflow exactly")
         
         # Create main output directory
         os.makedirs(output_base, exist_ok=True)
         
-        # Load and process left camera (cam0)
-        print("\n--- Loading Left Camera (cam0) ---")
-        left_gray, left_rgb = self.load_dng_image(left_dng_path, to_grayscale=True)
-        if left_gray is None:
-            raise ValueError("Failed to load left camera DNG file")
+        # Load and process camera (cam0)
+        print("\n--- Loading Camera (cam0) ---")
+        gray, rgb = self.load_dng_image(dng_path, to_grayscale=True)
+        if gray is None:
+            raise ValueError("Failed to load DNG file")
         
-        # Crop left image
-        left_cropped = self.crop_image(left_gray, 'cam0')
-        
-        # Save cropped RGB version as JPEG
-        left_rgb_cropped = self.crop_image(left_rgb, 'cam0')
-        self.save_jpeg_from_array(left_rgb_cropped, f"{output_base}/left_cam0_cropped.jpg")
-        
-        # Load and process right camera (cam1)  
-        print("\n--- Loading Right Camera (cam1) ---")
-        right_gray, right_rgb = self.load_dng_image(right_dng_path, to_grayscale=True)
-        if right_gray is None:
-            raise ValueError("Failed to load right camera DNG file")
-        
-        # Crop right image
-        right_cropped = self.crop_image(right_gray, 'cam1')
+        # Crop image
+        cropped = self.crop_image(gray, 'cam0')
         
         # Save cropped RGB version as JPEG
-        right_rgb_cropped = self.crop_image(right_rgb, 'cam1')
-        self.save_jpeg_from_array(right_rgb_cropped, f"{output_base}/right_cam1_cropped.jpg")
+        rgb_cropped = self.crop_image(rgb, 'cam0')
+        self.save_jpeg_from_array(rgb_cropped, f"{output_base}/cam0_cropped.jpg")
         
-        # Process both cameras using proper fisheye workflow
+        # Process camera using proper fisheye workflow
         try:
-            results = self.process_both_cameras_parallel(left_cropped, right_cropped, output_base)
+            results = self.process_single_camera(cropped, output_base)
             
-            # Save combined results
-            with open(f"{output_base}/distortion_coefficients_dual.json", 'w') as f:
+            # Save results
+            with open(f"{output_base}/distortion_coefficients.json", 'w') as f:
                 json.dump(results, f, indent=4)
             
             # Save summary
             with open(f"{output_base}/summary.txt", 'w') as f:
-                f.write("=== Dual Camera Fisheye Distortion Correction Results (Proper Dot Pattern Workflow) ===\n\n")
-                f.write(f"Left Camera (cam0):\n")
+                f.write("=== Single Camera Fisheye Distortion Correction Results (Proper Dot Pattern Workflow) ===\n\n")
+                f.write(f"Camera (cam0):\n")
                 f.write(f"  Center: ({results['cam0']['xcenter']:.4f}, {results['cam0']['ycenter']:.4f})\n")
                 f.write(f"  Radial Coefficients: {results['cam0']['coeffs']}\n")
                 if results['cam0']['pers_coef'] is not None:
@@ -827,14 +764,6 @@ class DualCameraFisheyeDistortionCorrectionV4:
                 else:
                     f.write(f"  Perspective Coefficients: Not calculated\n")
                 f.write(f"  Crop: {self.crop_params['cam0']}\n\n")
-                f.write(f"Right Camera (cam1):\n")
-                f.write(f"  Center: ({results['cam1']['xcenter']:.4f}, {results['cam1']['ycenter']:.4f})\n")
-                f.write(f"  Radial Coefficients: {results['cam1']['coeffs']}\n")
-                if results['cam1']['pers_coef'] is not None:
-                    f.write(f"  Perspective Coefficients: {results['cam1']['pers_coef']}\n")
-                else:
-                    f.write(f"  Perspective Coefficients: Not calculated\n")
-                f.write(f"  Crop: {self.crop_params['cam1']}\n\n")
                 
                 f.write(f"Processing parameters:\n")
                 f.write(f"  Number of coefficients: {self.num_coef}\n")
@@ -852,38 +781,30 @@ class DualCameraFisheyeDistortionCorrectionV4:
                 f.write(f"  Scale method: {self.perspective_params['scale']}\n")
                 f.write(f"  Optimizing: {self.perspective_params['optimizing']}\n")
                 
-                # Write parameters for each camera
-                for cam_name in ['cam0', 'cam1']:
-                    cam_label = "Left" if cam_name == "cam0" else "Right"
-                    dot_config = self.dot_pattern_params[cam_name]
-                    group_config = self.grouping_params[cam_name]
-                    mask_config = self.mask_params[cam_name]
-                    
-                    f.write(f"\n{cam_label} Camera ({cam_name}) parameters:\n")
-                    f.write(f"  Binarization ratio: {dot_config['binarization_ratio']}\n")
-                    f.write(f"  Size/distance ratio: {dot_config['size_distance_ratio']}\n")
-                    f.write(f"  Slope ratio: {dot_config['slope_ratio']}\n")
-                    f.write(f"  Grouping ratio: {group_config['ratio']}\n")
-                    f.write(f"  Num dot miss: {group_config['num_dot_miss']}\n")
-                    f.write(f"  Accepted ratio: {group_config['accepted_ratio']}\n")
-                    f.write(f"  Polynomial order: {group_config['order']}\n")
-                    f.write(f"  Residual threshold: {group_config['residual_threshold']}\n")
-                    f.write(f"  Polygon vertices: {len(mask_config['polygon_verts'])} points\n")
-                    f.write(f"  Masking type: V1-style polygon masking\n")
+                # Write parameters for camera
+                dot_config = self.dot_pattern_params['cam0']
+                group_config = self.grouping_params['cam0']
+                mask_config = self.mask_params['cam0']
+                
+                f.write(f"\nCamera (cam0) parameters:\n")
+                f.write(f"  Binarization ratio: {dot_config['binarization_ratio']}\n")
+                f.write(f"  Size/distance ratio: {dot_config['size_distance_ratio']}\n")
+                f.write(f"  Slope ratio: {dot_config['slope_ratio']}\n")
+                f.write(f"  Grouping ratio: {group_config['ratio']}\n")
+                f.write(f"  Num dot miss: {group_config['num_dot_miss']}\n")
+                f.write(f"  Accepted ratio: {group_config['accepted_ratio']}\n")
+                f.write(f"  Polynomial order: {group_config['order']}\n")
+                f.write(f"  Residual threshold: {group_config['residual_threshold']}\n")
+                f.write(f"  Polygon vertices: {len(mask_config['polygon_verts'])} points\n")
+                f.write(f"  Masking type: V1-style polygon masking\n")
             
             print("\n=== PROCESSING COMPLETE ===")
-            print(f"Left Camera (cam0):  Center: ({results['cam0']['xcenter']:.4f}, {results['cam0']['ycenter']:.4f})")
-            print(f"                     Radial Coeffs: {results['cam0']['coeffs']}")
+            print(f"Camera (cam0):  Center: ({results['cam0']['xcenter']:.4f}, {results['cam0']['ycenter']:.4f})")
+            print(f"                Radial Coeffs: {results['cam0']['coeffs']}")
             if results['cam0']['pers_coef'] is not None:
-                print(f"                     Perspective: Available")
+                print(f"                Perspective: Available")
             else:
-                print(f"                     Perspective: Failed/Skipped")
-            print(f"Right Camera (cam1): Center: ({results['cam1']['xcenter']:.4f}, {results['cam1']['ycenter']:.4f})")
-            print(f"                     Radial Coeffs: {results['cam1']['coeffs']}")
-            if results['cam1']['pers_coef'] is not None:
-                print(f"                     Perspective: Available")
-            else:
-                print(f"                     Perspective: Failed/Skipped")
+                print(f"                Perspective: Failed/Skipped")
             print(f"Results saved to: {output_base}")
             print(f"\nFinal Parameters Used:")
             print(f"  Analysis method: Proper fisheye dot pattern calibration")
@@ -903,53 +824,54 @@ class DualCameraFisheyeDistortionCorrectionV4:
             traceback.print_exc()
             return False
 
-    def test_correction_on_images(self, test_image_left, test_image_right, output_base):
+
+
+    def test_correction_on_images(self, test_image, output_base):
         """Test the correction on additional images using proper fisheye correction"""
         if not self.test_images:
             return
             
         print("\n=== Testing correction on additional images ===")
         
-        for cam_name, test_path in [('cam0', test_image_left), ('cam1', test_image_right)]:
-            if not test_path or not os.path.exists(test_path):
-                print(f"Skipping {cam_name} test - file not found: {test_path}")
-                continue
+        if not test_image or not os.path.exists(test_image):
+            print(f"Skipping test - file not found: {test_image}")
+            return
                 
-            print(f"Testing {cam_name}...")
-            
-            # Load test image
-            if test_path.lower().endswith('.dng'):
-                test_gray, test_rgb = self.load_dng_image(test_path, to_grayscale=False)
-            else:
-                test_rgb = losa.load_image(test_path, average=False)
-            
-            if test_rgb is None:
-                print(f"Failed to load test image for {cam_name}")
-                continue
-            
-            # Crop test image
-            test_cropped = self.crop_image(test_rgb, cam_name)
-            
-            # Apply correction using stored results
-            xcenter = self.results[cam_name]['xcenter']
-            ycenter = self.results[cam_name]['ycenter'] 
-            coeffs = self.results[cam_name]['coeffs']
-            
-            if xcenter is None:
-                print(f"No correction parameters available for {cam_name}")
-                continue
-            
-            # Apply fisheye correction (following the example)
-            test_corrected = util.unwarp_color_image_backward(
-                test_cropped, xcenter, ycenter, coeffs, 
-                pad=self.fisheye_params['padding'])
-            
-            # Save results
-            test_output_dir = f"{output_base}_{cam_name}"
-            self.save_jpeg_from_array(test_cropped, f"{test_output_dir}/test_image_original.jpg")
-            self.save_jpeg_from_array(test_corrected, f"{test_output_dir}/test_image_corrected.jpg")
-            
-            print(f"   {cam_name} test correction saved")
+        print(f"Testing camera...")
+        
+        # Load test image
+        if test_image.lower().endswith('.dng'):
+            test_gray, test_rgb = self.load_dng_image(test_image, to_grayscale=False)
+        else:
+            test_rgb = losa.load_image(test_image, average=False)
+        
+        if test_rgb is None:
+            print(f"Failed to load test image")
+            return
+        
+        # Crop test image
+        test_cropped = self.crop_image(test_rgb, 'cam0')
+        
+        # Apply correction using stored results
+        xcenter = self.results['cam0']['xcenter']
+        ycenter = self.results['cam0']['ycenter'] 
+        coeffs = self.results['cam0']['coeffs']
+        
+        if xcenter is None:
+            print(f"No correction parameters available")
+            return
+        
+        # Apply fisheye correction (following the example)
+        test_corrected = util.unwarp_color_image_backward(
+            test_cropped, xcenter, ycenter, coeffs, 
+            pad=self.fisheye_params['padding'])
+        
+        # Save results
+        test_output_dir = f"{output_base}_test"
+        self.save_jpeg_from_array(test_cropped, f"{test_output_dir}/test_image_original.jpg")
+        self.save_jpeg_from_array(test_corrected, f"{test_output_dir}/test_image_corrected.jpg")
+        
+        print(f"   Test correction saved")
 
 # Main execution function
 def main():
@@ -957,13 +879,13 @@ def main():
     root = tk.Tk()
     root.withdraw()  # Hide the main window
     
-    print("=== Dual Camera Fisheye Distortion Correction V4 (Proper Dot Pattern Workflow) ===")
+    print("=== Single Camera Fisheye Distortion Correction V4 (Proper Dot Pattern Workflow) ===")
     print("Following Discorpy_Fisheye_Example.py exactly for proper fisheye dot calibration")
-    print("Please select the calibration files...")
+    print("Please select the calibration file...")
     
     # Select camera DNG file
-    left_dng_path = filedialog.askopenfilename(
-        title="Select LEFT Camera (cam0) DNG Calibration File",
+    dng_path = filedialog.askopenfilename(
+        title="Select Camera DNG Calibration File",
         filetypes=[
             ("DNG files", "*.dng"),
             ("All files", "*.*")
@@ -971,39 +893,24 @@ def main():
         initialdir=r"C:\Users\NoahB\Documents\HebrewU Bioengineering\Equipment\Camera"
     )
     
-    if not left_dng_path:
-        print("No left DNG file selected. Exiting...")
-        return
-    
-    # Select right camera DNG file
-    right_dng_path = filedialog.askopenfilename(
-        title="Select RIGHT Camera (cam1) DNG Calibration File",
-        filetypes=[
-            ("DNG files", "*.dng"),
-            ("All files", "*.*")
-        ],
-        initialdir=os.path.dirname(left_dng_path)  # Start in same directory as left file
-    )
-    
-    if not right_dng_path:
-        print("No right DNG file selected. Exiting...")
+    if not dng_path:
+        print("No DNG file selected. Exiting...")
         return
     
     # Select output directory
     output_base = filedialog.askdirectory(
         title="Select Output Directory for Results",
-        initialdir=os.path.dirname(left_dng_path)  # Start in same directory as input files
+        initialdir=os.path.dirname(dng_path)  # Start in same directory as input file
     )
     
     if not output_base:
-        # If no directory selected, use the same directory as the input files
-        output_base = os.path.join(os.path.dirname(left_dng_path), "Dual_Fisheye_V4_Results")
+        # If no directory selected, use the same directory as the input file
+        output_base = os.path.join(os.path.dirname(dng_path), "Single_Fisheye_V4_Results")
         print(f"No output directory selected. Using: {output_base}")
     
     # Display selected files
     print(f"\nSelected files:")
-    print(f"Left DNG:  {os.path.basename(left_dng_path)}")
-    print(f"Right DNG: {os.path.basename(right_dng_path)}")
+    print(f"DNG:  {os.path.basename(dng_path)}")
     print(f"Output:    {output_base}")
     
     # Ask user for processing options
@@ -1054,7 +961,7 @@ def main():
         interactive_polygon = False
     
     # Create processor
-    processor = DualCameraFisheyeDistortionCorrectionV4()
+    processor = SingleCameraFisheyeDistortionCorrectionV4()
     
     # Configure processing options based on user choice
     processor.debug_plots = 1 if debug_enabled else 0
@@ -1077,60 +984,46 @@ def main():
     print(f"  Perspective correction: {processor.fisheye_params['enable_perspective_correction']}")
     print(f"  Separate perspective coefficients: {'Enabled' if processor.save_perspective_coefficients else 'Disabled'}")
     
-    # Verify files exist
-    if not os.path.exists(left_dng_path):
-        messagebox.showerror("Error", f"Left DNG file not found:\n{left_dng_path}")
-        return
-    
-    if not os.path.exists(right_dng_path):
-        messagebox.showerror("Error", f"Right DNG file not found:\n{right_dng_path}")
+    # Verify file exists
+    if not os.path.exists(dng_path):
+        messagebox.showerror("Error", f"DNG file not found:\n{dng_path}")
         return
     
     try:
-        # Process both cameras
+        # Process camera
         print(f"\nStarting processing...")
-        success = processor.process_dual_cameras(left_dng_path, right_dng_path, output_base)
+        success = processor.process_single_camera_file(dng_path, output_base)
         
         if success:
             # Ask if user wants to test on additional images
             if messagebox.askyesno("Testing", "Processing complete!\n\nDo you want to test the correction on additional images?"):
-                # Select test images
-                test_left = filedialog.askopenfilename(
-                    title="Select LEFT test image (optional - can cancel)",
+                # Select test image
+                test_image = filedialog.askopenfilename(
+                    title="Select test image (optional - can cancel)",
                     filetypes=[
                         ("DNG files", "*.dng"),
                         ("Image files", "*.jpg;*.jpeg;*.png;*.tiff"),
                         ("All files", "*.*")
                     ],
-                    initialdir=os.path.dirname(left_dng_path)
+                    initialdir=os.path.dirname(dng_path)
                 )
                 
-                test_right = filedialog.askopenfilename(
-                    title="Select RIGHT test image (optional - can cancel)",
-                    filetypes=[
-                        ("DNG files", "*.dng"),
-                        ("Image files", "*.jpg;*.jpeg;*.png;*.tiff"),
-                        ("All files", "*.*")
-                    ],
-                    initialdir=os.path.dirname(right_dng_path)
-                )
-                
-                if test_left or test_right:
+                if test_image:
                     processor.test_images = 1  # Enable testing
-                    processor.test_correction_on_images(test_left, test_right, output_base)
+                    processor.test_correction_on_images(test_image, output_base)
             
             print("\n=== All processing complete! ===")
             perspective_info = ""
             if processor.save_perspective_coefficients:
-                perspective_info = "\n• perspective_coefficients.txt (in each camera folder)"
+                perspective_info = "\n• perspective_coefficients.txt"
             
             messagebox.showinfo("Success", 
                 f"Processing completed successfully!\n\n"
                 f"Results saved to:\n{output_base}\n\n"
                 f"Key files:\n"
-                f"• distortion_coefficients_dual.json (radial + perspective)\n"
+                f"• distortion_coefficients.json (radial + perspective)\n"
                 f"• summary.txt{perspective_info}\n"
-                f"• Individual camera results in subdirectories\n\n"
+                f"• Individual processing results in subdirectories\n\n"
                 f"Analysis type: Proper fisheye dot pattern (Discorpy_Fisheye_Example.py)\n"
                 f"Coefficients: {'Radial + Perspective' if processor.save_perspective_coefficients else 'Radial only'}")
             
