@@ -50,32 +50,47 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         
         # Polygon masking parameters (like V1)
         self.mask_params = {
-            'cam0': {
-                'polygon_verts': [
-                    (167.7, 104.7),
-                    (411.7, 54.2),
-                    (630.6, 20.5),
-                    (916.7, 12.1),
-                    (1282.8, 12.1),
-                    (1535.2, 33.2),
-                    (1766.7, 66.8),
-                    (2065.4, 125.7),
-                    (2065.4, 2334.8),
-                    (1425.8, 2452.6),
-                    (1021.9, 2490.5),
-                    (626.3, 2482.1),
-                    (247.6, 2427.4),
-                    (180.3, 2086.6),
-                    (121.4, 1707.9),
-                    (96.2, 1354.4),
-                    (87.7, 1009.4),
-                    (104.6, 693.8),
-                    (138.2, 403.4),
-                    (176.1, 108.9)
-                    ]
+            "cam0": {
+                "polygon_verts": [
+                    (3851.763615710761,
+                        3430.050605615152),
+                    (3872.9996294631455,
+                        2024.2264952073185),
+                    (3864.505223962192,
+                        1263.9772028719644),
+                    (3851.763615710761,
+                        614.1551820490081),
+                    (3851.763615710761,
+                        49.27721623558864),
+                    (3380.3241104078324,
+                        19.546796982250726),
+                    (2883.401388602042,
+                        15.299594231773881),
+                    (2297.2874090362393,
+                        28.041202483204415),
+                    (1413.869236937057,
+                        45.030013485111795),
+                    (148.20281729495946,
+                        95.99644649083393),
+                    (33.528343032085104,
+                        104.49085199178762),
+                    (33.528343032085104,
+                        958.1786048376321),
+                    (37.77554578256195,
+                        1582.5174091577273),
+                    (63.25876228542302,
+                        2219.597821729253),
+                    (80.2475732873304,
+                        2916.139072807455),
+                    (131.21400629305208,
+                        3489.511444121828),
+                    (1774.8814707275883,
+                        3489.511444121828),
+                    (3015.0646738668247,
+                        3489.511444121828),
+                ]
             }
-        }
-        
+}
         # Grouping parameters (following Discorpy_Fisheye_Example.py exactly)
         self.grouping_params = {
             'cam0': {
@@ -83,7 +98,7 @@ class SingleCameraFisheyeDistortionCorrectionV4:
                 'num_dot_miss': 3,          # Number of missing dots allowed
                 'accepted_ratio': 0.65,     # Acceptance ratio for grouping
                 'order': 2,                 # Polynomial order for polyfit
-                'residual_threshold': 20.0   # Residual threshold (from example)
+                'residual_threshold': 5.0   # Residual threshold (from example)
             }
         }
         
@@ -208,7 +223,7 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         return cropped
     
    
-    def create_polygon_mask(self, image, cam_name):
+    def create_polygon_mask(self, image, cam_name, output_dir=None):
         """
         Create polygon mask for the image using V1-style polygon masking
         
@@ -218,6 +233,8 @@ class SingleCameraFisheyeDistortionCorrectionV4:
             2D array of the image
         cam_name : str
             Camera name ('cam0' or 'cam1')
+        output_dir : str, optional
+            Directory to save polygon vertices JSON file
             
         Returns
         -------
@@ -237,9 +254,29 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         mask = mask_flat.reshape((height, width))
         
         print(f"      {cam_name}: Created polygon mask with {len(polygon_verts)} vertices")
+        
+        # Save polygon vertices as JSON file if output directory is provided
+        if output_dir is not None:
+            try:
+                # Create the mask parameters structure similar to hardcoded format
+                mask_data = {
+                    cam_name: {
+                        'polygon_verts': [(float(x), float(y)) for x, y in polygon_verts]
+                    }
+                }
+                
+                # Save to JSON file
+                json_path = os.path.join(output_dir, f"polygon_mask_{cam_name}.json")
+                with open(json_path, 'w') as f:
+                    json.dump(mask_data, f, indent=4)
+                
+                print(f"      {cam_name}: Saved polygon vertices to {json_path}")
+            except Exception as e:
+                print(f"      {cam_name}: Warning - Failed to save polygon vertices: {e}")
+        
         return mask
 
-    def apply_polygon_mask_to_points(self, points, image, cam_name):
+    def apply_polygon_mask_to_points(self, points, image, cam_name, output_dir=None):
         """
         Apply polygon mask to filter points (V1 style)
         
@@ -251,13 +288,15 @@ class SingleCameraFisheyeDistortionCorrectionV4:
             2D array of the image
         cam_name : str
             Camera name ('cam0' or 'cam1')
+        output_dir : str, optional
+            Directory to save polygon vertices JSON file
             
         Returns
         -------
         filtered_points : array_like
             Filtered points within the polygon mask
         """
-        mask = self.create_polygon_mask(image, cam_name)
+        mask = self.create_polygon_mask(image, cam_name, output_dir)
         
         # Convert points to integers for indexing
         y_coords = np.clip(np.round(points[:, 0]).astype(int), 0, mask.shape[0] - 1)
@@ -275,7 +314,7 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         Save mask visualization for debugging (V1 style)
         """
         if self.apply_masking:
-            mask = self.create_polygon_mask(image, cam_name)
+            mask = self.create_polygon_mask(image, cam_name, output_dir)
             
             # Create visualization
             masked_image = image.copy().astype(np.float32)
@@ -484,7 +523,7 @@ class SingleCameraFisheyeDistortionCorrectionV4:
                 self.mask_params[cam_name]['polygon_verts'] = new_polygon
             
             # Apply polygon mask to filter points
-            list_points_filtered = self.apply_polygon_mask_to_points(list_points, image, cam_name)
+            list_points_filtered = self.apply_polygon_mask_to_points(list_points, image, cam_name, output_dir)
             list_points_hor_lines = list_points_filtered
             list_points_ver_lines = np.copy(list_points_filtered)
             
