@@ -9,7 +9,8 @@ from PIL import Image
 #there is a threshold which can be modified or removed depending on if it is determined necessary the threshold helps with finding organoids.
 
 class MaskCropper:
-    def __init__(self, input_image_path, mask_path, output_folder="Well_Crops", target_size=(512, 512)):
+    def __init__(self, input_image_path, mask_path, output_folder="Well_Crops", target_size=None, 
+                 use_quadrant_labeling=True, quadrant_row_range=None, quadrant_col_range=None):
         """
         Initialize the MaskCropper
         
@@ -18,11 +19,19 @@ class MaskCropper:
             mask_path: Path to the binary mask
             output_folder: Folder to save cropped images
             target_size: Target size for resized images (width, height). Set to None to keep original crop sizes.
+            use_quadrant_labeling: If True, use quadrant labeling system (default: False for regular A1, A2, A3... labeling)
+            quadrant_row_range: Custom row range for quadrant labeling (default: ['m', 'l', 'k', 'j', 'i', 'h', 'g', 'f', 'e', 'd', 'c', 'b', 'a'])
+            quadrant_col_range: Custom column range for quadrant labeling (default: range(10, 25))
         """
         self.input_image_path = input_image_path
         self.mask_path = mask_path
         self.output_folder = output_folder
         self.target_size = target_size
+        
+        # === QUADRANT WELL LABELING PARAMETERS ===
+        self.use_quadrant_labeling = use_quadrant_labeling
+        self.quadrant_row_range = quadrant_row_range or ['m', 'l', 'k', 'j', 'i', 'h', 'g', 'f', 'e', 'd', 'c', 'b', 'a']
+        self.quadrant_col_range = quadrant_col_range or list(range(10, 25))
         
         # Create output folder
         Path(self.output_folder).mkdir(exist_ok=True)
@@ -31,6 +40,12 @@ class MaskCropper:
             print(f"Target size for cropped images: {target_size[0]}x{target_size[1]}")
         else:
             print("Keeping original crop sizes (no resizing)")
+        
+        # Print labeling system info
+        if self.use_quadrant_labeling:
+            print(f"Using quadrant labeling: rows {self.quadrant_row_range}, cols {self.quadrant_col_range}")
+        else:
+            print("Using regular labeling: A1, A2, A3, B1, B2, B3, etc.")
         
         # Load images
         self.load_images()
@@ -104,7 +119,7 @@ class MaskCropper:
         return regions_with_grid, labels
     
     def assign_grid_positions(self, regions):
-        """Assign grid positions based on column-first ordering (A1, B1, C1, ..., P1, A2, B2, etc.)"""
+        """Assign grid positions based on labeling system (regular or quadrant)"""
         if not regions:
             return regions
         
@@ -138,22 +153,47 @@ class MaskCropper:
         for column in columns:
             column.sort(key=lambda r: r['centroid'][1])
         
-        # Assign grid labels: A1, B1, C1, ..., P1, then A2, B2, C2, ..., P2, etc.
+        # Assign grid labels based on labeling system
         regions_with_grid = []
         
-        for col_idx, column in enumerate(columns):
-            col_number = col_idx + 1  # 1, 2, 3, etc.
-            
-            for row_idx, region in enumerate(column):
-                row_letter = chr(ord('A') + row_idx)  # A, B, C, D, ..., P
-                grid_label = f"{row_letter}{col_number}"
+        if self.use_quadrant_labeling:
+            # Use quadrant labeling system
+            for col_idx, column in enumerate(columns):
+                if col_idx >= len(self.quadrant_col_range):
+                    print(f"Warning: More columns ({len(columns)}) than available in quadrant range ({len(self.quadrant_col_range)})")
+                    break
                 
-                # Add grid information to region
-                region['grid_label'] = grid_label
-                region['grid_row'] = row_idx
-                region['grid_col'] = col_idx
+                col_number = self.quadrant_col_range[col_idx]  # Use quadrant column numbers
                 
-                regions_with_grid.append(region)
+                for row_idx, region in enumerate(column):
+                    if row_idx >= len(self.quadrant_row_range):
+                        print(f"Warning: More rows in column {col_idx + 1} ({len(column)}) than available in quadrant range ({len(self.quadrant_row_range)})")
+                        break
+                    
+                    row_letter = self.quadrant_row_range[row_idx].upper()  # Use quadrant row letters
+                    grid_label = f"{row_letter}{col_number}"
+                    
+                    # Add grid information to region
+                    region['grid_label'] = grid_label
+                    region['grid_row'] = row_idx
+                    region['grid_col'] = col_idx
+                    
+                    regions_with_grid.append(region)
+        else:
+            # Use regular labeling system (A1, A2, A3, B1, B2, B3, etc.)
+            for col_idx, column in enumerate(columns):
+                col_number = col_idx + 1  # 1, 2, 3, etc.
+                
+                for row_idx, region in enumerate(column):
+                    row_letter = chr(ord('A') + row_idx)  # A, B, C, D, ..., P
+                    grid_label = f"{row_letter}{col_number}"
+                    
+                    # Add grid information to region
+                    region['grid_label'] = grid_label
+                    region['grid_row'] = row_idx
+                    region['grid_col'] = col_idx
+                    
+                    regions_with_grid.append(region)
         
         # Sort final list by column then row for consistent processing
         regions_with_grid.sort(key=lambda r: (r['grid_col'], r['grid_row']))
@@ -162,14 +202,19 @@ class MaskCropper:
         num_columns = len(columns)
         max_rows = max(len(column) for column in columns) if columns else 0
         
-        print(f"Grid layout: {max_rows} rows x {num_columns} columns")
+        labeling_type = "quadrant" if self.use_quadrant_labeling else "regular"
+        print(f"Grid layout ({labeling_type}): {max_rows} rows x {num_columns} columns")
         print(f"Column grouping tolerance: {x_tolerance} pixels")
         
         # Debug: Show column sizes
         print("Column details:")
         for i, column in enumerate(columns):
             avg_x = sum(r['centroid'][0] for r in column) / len(column)
-            print(f"  Column {i+1}: {len(column)} wells, avg X = {int(avg_x)}")
+            if self.use_quadrant_labeling and i < len(self.quadrant_col_range):
+                col_label = self.quadrant_col_range[i]
+                print(f"  Column {i+1} (label {col_label}): {len(column)} wells, avg X = {int(avg_x)}")
+            else:
+                print(f"  Column {i+1}: {len(column)} wells, avg X = {int(avg_x)}")
         
         print("Grid assignments:")
         for region in regions_with_grid:
@@ -296,7 +341,7 @@ class MaskCropper:
                 if self.target_size:
                     # Resize and center the cropped image with white background
                     final_image = self.resize_and_center_image(cropped_image)
-                    size_info = f"resized to {self.target_size[0]}x{self.target_size[1]}"
+                    size_info = f"resized to {self.target_size[0]}x{self.target_size[1]} with white background"
                 else:
                     # Keep original crop size
                     final_image = cropped_image
@@ -380,8 +425,8 @@ class MaskCropper:
 def main():
     """Main function to run the mask cropper"""
     # Input paths
-    input_image_path = r"C:\Users\NoahB\Documents\HebrewU Bioengineering\Equipment\Camera\RPI\Well_Segmentation\Fav_Translucent_Plate.png"
-    mask_path = r"C:\Users\NoahB\Documents\HebrewU Bioengineering\Equipment\Camera\RPI\Well_Segmentation\final_adjusted_mask.png"
+    input_image_path = r"imx_519_Focus_6.jpg"
+    mask_path = r"IMX519_Mask.png"
         
     # Check if files exist
     if not os.path.exists(input_image_path):
@@ -393,10 +438,37 @@ def main():
         print("Please make sure you have created a mask using the interactive_mask_creator.py")
         return
     
+    # Ask user for labeling preference
+    print("\nLabeling System Options:")
+    print("1. Regular labeling: A1, A2, A3, B1, B2, B3, etc.")
+    print("2. Quadrant labeling: M10, L10, K10, etc. (matching Organoid_Analysis_Quadrant.py)")
+    
+    while True:
+        choice = input("\nSelect labeling system (1 or 2): ").strip()
+        if choice in ['1', '2']:
+            break
+        print("Please enter 1 or 2")
+    
+    use_quadrant_labeling = (choice == '2')
+    
     try:
         # Create cropper with target size (can be customized)
-        target_size = (512, 512)  # Width x Height - can be changed as needed
-        cropper = MaskCropper(input_image_path, mask_path, "wellfile", target_size)
+        target_size = None  # Width x Height - can be changed as needed
+        
+        if use_quadrant_labeling:
+            # Use quadrant labeling system (matching Organoid_Analysis_Quadrant.py)
+            cropper = MaskCropper(
+                input_image_path, 
+                mask_path, 
+                "wellfile", 
+                target_size,
+                use_quadrant_labeling=True,
+                quadrant_row_range=['m', 'l', 'k', 'j', 'i', 'h', 'g', 'f', 'e', 'd', 'c', 'b', 'a'],
+                quadrant_col_range=list(range(10, 25))
+            )
+        else:
+            # Use regular labeling system
+            cropper = MaskCropper(input_image_path, mask_path, "wellfile", target_size)
         
         # Show preview of detected regions
         print("Showing preview of detected regions...")
@@ -407,7 +479,12 @@ def main():
             return
         
         # Ask user to proceed
-        user_input = input(f"\nFound {num_regions} regions. Proceed with cropping and resizing to {target_size[0]}x{target_size[1]}? (y/n): ")
+        labeling_info = "quadrant labeling (M10, L10, etc.)" if use_quadrant_labeling else "regular labeling (A1, A2, etc.)"
+        if target_size:
+            size_info = f"and resizing to {target_size[0]}x{target_size[1]}"
+        else:
+            size_info = "at original mask size (no resizing)"
+        user_input = input(f"\nFound {num_regions} regions with {labeling_info}. Proceed with cropping {size_info}? (y/n): ")
         if user_input.lower() != 'y':
             print("Cropping cancelled.")
             return

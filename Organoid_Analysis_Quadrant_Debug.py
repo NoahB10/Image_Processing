@@ -18,7 +18,7 @@ try:
     from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
                                  QWidget, QPushButton, QLabel, QSlider, QGroupBox,
                                  QScrollArea, QTextEdit, QGridLayout, QSpinBox, 
-                                 QDoubleSpinBox, QTabWidget)
+                                 QDoubleSpinBox, QTabWidget, QCheckBox)
     from PyQt6.QtCore import Qt, QTimer
     from PyQt6.QtGui import QPixmap, QImage
 except ImportError:
@@ -54,6 +54,10 @@ class ParameterDebugGUI(QMainWindow):
         
         self.init_ui()
         self.load_parameters()
+        
+        # Update UI after loading parameters
+        if hasattr(self, 'mask_filter_checkbox'):
+            self.mask_filter_checkbox.setChecked(self.analyzer.params.ENABLE_MASK_FILTERING)
         
         # Don't load images automatically - wait for user selection
         # self.load_images()
@@ -390,6 +394,24 @@ class ParameterDebugGUI(QMainWindow):
         morph_layout.addWidget(self.dilation_label, 2, 2)
         
         params_layout.addWidget(morph_group)
+        
+        # Mask filtering toggle
+        mask_group = QGroupBox("Mask Filtering")
+        mask_layout = QVBoxLayout(mask_group)
+        
+        self.mask_filter_checkbox = QCheckBox("Enable Mask Filtering")
+        self.mask_filter_checkbox.setChecked(self.analyzer.params.ENABLE_MASK_FILTERING)
+        self.mask_filter_checkbox.stateChanged.connect(self.update_mask_filtering)
+        
+        mask_layout.addWidget(self.mask_filter_checkbox)
+        
+        # Add help text
+        help_label = QLabel("Apply mask to filter out regions outside well boundaries")
+        help_label.setStyleSheet("color: gray; font-size: 10px;")
+        help_label.setWordWrap(True)
+        mask_layout.addWidget(help_label)
+        
+        params_layout.addWidget(mask_group)
         
         scroll_widget.setLayout(params_layout)
         scroll_area.setWidget(scroll_widget)
@@ -761,6 +783,24 @@ class ParameterDebugGUI(QMainWindow):
         # Invert binary image (organoids should be white)
         inverted_binary = cv2.bitwise_not(binary_image)
         
+        # Apply mask filtering if enabled and mask is available
+        if (self.analyzer.params.ENABLE_MASK_FILTERING and 
+            hasattr(self.analyzer, 'mask_path') and self.analyzer.mask_path and self.analyzer.mask_path != "dummy_mask.png"):
+            try:
+                mask = cv2.imread(self.analyzer.mask_path, cv2.IMREAD_GRAYSCALE)
+                if mask is not None:
+                    # Resize mask to match image if needed
+                    if mask.shape != inverted_binary.shape:
+                        mask = cv2.resize(mask, (inverted_binary.shape[1], inverted_binary.shape[0]))
+                    
+                    # Apply mask filter - keep only white areas of mask
+                    inverted_binary = cv2.bitwise_and(inverted_binary, mask)
+                    self.log_status("   Applied mask filter to morphological operations")
+            except Exception as e:
+                self.log_status(f"   Warning: Could not apply mask filter: {e}")
+        elif not self.analyzer.params.ENABLE_MASK_FILTERING:
+            self.log_status("   Mask filtering disabled for morphological operations")
+        
         # Create kernel
         kernel = np.ones((self.kernel_size, self.kernel_size), np.uint8)
         
@@ -785,8 +825,9 @@ class ParameterDebugGUI(QMainWindow):
         # Apply mask filtering first (same as in detection)
         inverted_binary = cv2.bitwise_not(binary_plate)
         
-        # Apply mask filtering if mask is available
-        if hasattr(self.analyzer, 'mask_path') and self.analyzer.mask_path and self.analyzer.mask_path != "dummy_mask.png":
+        # Apply mask filtering if enabled and mask is available
+        if (self.analyzer.params.ENABLE_MASK_FILTERING and 
+            hasattr(self.analyzer, 'mask_path') and self.analyzer.mask_path and self.analyzer.mask_path != "dummy_mask.png"):
             try:
                 mask = cv2.imread(self.analyzer.mask_path, cv2.IMREAD_GRAYSCALE)
                 if mask is not None:
@@ -807,7 +848,8 @@ class ParameterDebugGUI(QMainWindow):
         
         # Create figure
         fig, axes = plt.subplots(2, 4, figsize=(16, 8))
-        fig.suptitle(f'Binary Erosion Stages Visualization (Kernel: {self.kernel_size}x{self.kernel_size})', fontsize=14)
+        mask_status = "Mask ON" if self.analyzer.params.ENABLE_MASK_FILTERING else "Mask OFF"
+        fig.suptitle(f'Binary Erosion Stages Visualization (Kernel: {self.kernel_size}x{self.kernel_size}, {mask_status})', fontsize=14)
         
         axes = axes.flatten()
         
@@ -1221,6 +1263,12 @@ class ParameterDebugGUI(QMainWindow):
         self.analyzer.params.CENTROID_MERGE_THRESHOLD = value
         self.merge_threshold_label.setText(str(value))
         
+    def update_mask_filtering(self, state):
+        """Update mask filtering toggle"""
+        self.analyzer.params.ENABLE_MASK_FILTERING = state == 2  # Qt.CheckState.Checked is 2
+        self.save_parameters()
+        self.log_status(f"🎭 Mask filtering: {'Enabled' if self.analyzer.params.ENABLE_MASK_FILTERING else 'Disabled'}")
+        
     def display_image(self, cv_image):
         """Display OpenCV image in the QLabel"""
         if cv_image is None:
@@ -1309,6 +1357,7 @@ class ParameterDebugGUI(QMainWindow):
                     self.analyzer.params.BINARY_EROSION_STAGES = bp.get('erosion_stages', 4)
                     self.kernel_size = bp.get('kernel_size', 3)
                     self.dilation_iterations = bp.get('dilation_iterations', 0)
+                    self.analyzer.params.ENABLE_MASK_FILTERING = bp.get('enable_mask_filtering', True)
                 
                 # Load color parameters
                 if 'color' in params:
@@ -1344,7 +1393,8 @@ class ParameterDebugGUI(QMainWindow):
                     'circularity': self.analyzer.params.BINARY_CIRCULARITY_THRESHOLD,
                     'erosion_stages': self.analyzer.params.BINARY_EROSION_STAGES,
                     'kernel_size': self.kernel_size,
-                    'dilation_iterations': self.dilation_iterations
+                    'dilation_iterations': self.dilation_iterations,
+                    'enable_mask_filtering': self.analyzer.params.ENABLE_MASK_FILTERING
                 },
                 'color': {
                     'min_diameter': self.analyzer.params.COLOR_MIN_DIAMETER,

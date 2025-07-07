@@ -78,6 +78,9 @@ class AnalysisParameters:
     DEBUG_MODE = False  # Disabled in simple version
     ENABLE_WELL_ANALYSIS = True
     SHOW_FINAL_OVERVIEW = True
+    
+    # === MASK FILTERING PARAMETERS ===
+    ENABLE_MASK_FILTERING = True
 
 class QuadrantMaskCropperIntegrated:
     """Integrated mask cropper for quadrant analysis"""
@@ -345,8 +348,9 @@ class WellOrganoidAnalyzer:
         # Invert binary image (organoids should be white)
         inverted_binary = cv2.bitwise_not(image)
         
-        # Apply mask filtering if mask is available
-        if hasattr(self, 'mask_path') and self.mask_path and self.mask_path != "dummy_mask.png":
+        # Apply mask filtering if enabled and mask is available
+        if (self.params.ENABLE_MASK_FILTERING and 
+            hasattr(self, 'mask_path') and self.mask_path and self.mask_path != "dummy_mask.png"):
             try:
                 mask = cv2.imread(self.mask_path, cv2.IMREAD_GRAYSCALE)
                 if mask is not None:
@@ -359,6 +363,8 @@ class WellOrganoidAnalyzer:
                     print(f"   Applied mask filter to binary detection")
             except Exception as e:
                 print(f"   Warning: Could not apply mask filter: {e}")
+        elif not self.params.ENABLE_MASK_FILTERING:
+            print(f"   Mask filtering disabled")
         
         # Apply erosion stages
         kernel = np.ones((3, 3), np.uint8)
