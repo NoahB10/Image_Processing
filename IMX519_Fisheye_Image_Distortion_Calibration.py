@@ -28,8 +28,8 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         }
         
         # Processing parameters for PROPER FISHEYE DOT PATTERN analysis
-        self.num_coef = 3  # Number of polynomial coefficients for fisheye
-        self.sigma_normalization = 8  # FFT normalization (10 like the example)
+        self.num_coef = 5  # Number of polynomial coefficients for fisheye
+        self.sigma_normalization = 20  # FFT normalization (10 like the example)
         
         # Dot pattern parameters (following Discorpy_Fisheye_Example.py)
         self.dot_pattern_params = {
@@ -43,7 +43,7 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         # Dot parameters (set to None to use calc_size_distance, or specify values)
         self.dot_parameters = {
             'cam0': {
-                'dot_size': 30.0,  # Set to specific value or None to auto-calculate
+                'dot_size': None,  # Set to specific value or None to auto-calculate
                 'dot_dist': None   # Set to specific value or None to auto-calculate
             }
         }
@@ -74,16 +74,16 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         self.grouping_params = {
             'cam0': {
                 'ratio': 0.4,               # Grouping tolerance ratio (from example)
-                'num_dot_miss': 3,          # Number of missing dots allowed
+                'num_dot_miss': 4,          # Number of missing dots allowed
                 'accepted_ratio': 0.65,     # Acceptance ratio for grouping
                 'order': 2,                 # Polynomial order for polyfit
-                'residual_threshold': 5.0   # Residual threshold (from example)
+                'residual_threshold': 10.0   # Residual threshold (from example)
             }
         }
         
         # Fisheye-specific parameters (following the example)
         self.fisheye_params = {
-            'vanishing_point_iterations': 2,  # Iterations for center finding
+            'vanishing_point_iterations': 5,  # Iterations for center finding
             'enable_perspective_correction': True,  # Apply perspective correction
             'padding': 400  # Padding for unwarping
         }
