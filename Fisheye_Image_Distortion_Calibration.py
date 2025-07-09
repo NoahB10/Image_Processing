@@ -32,19 +32,19 @@ class DualCameraFisheyeDistortionCorrectionV4:
         
         # Processing parameters for PROPER FISHEYE DOT PATTERN analysis
         self.num_coef = 6  # Number of polynomial coefficients for fisheye
-        self.sigma_normalization = 30  # FFT normalization (10 like the example)
+        self.sigma_normalization = 40  # FFT normalization (10 like the example)
         
         # Dot pattern parameters (following Discorpy_Fisheye_Example.py)
         self.dot_pattern_params = {
             'cam0': {
                 'binarization_ratio': 0.8,  # Ratio for binarization
-                'size_distance_ratio': 0.3,  # Ratio for size/distance calculation
-                'slope_ratio': 0.3           # Ratio for slope calculation
+                'size_distance_ratio': 0.7,  # Ratio for size/distance calculation
+                'slope_ratio': 0.7           # Ratio for slope calculation
             },
             'cam1': {
                 'binarization_ratio': 0.8,
-                'size_distance_ratio': 0.3,
-                'slope_ratio': 0.3
+                'size_distance_ratio': 0.7,
+                'slope_ratio': 0.7
             }
         }
 
