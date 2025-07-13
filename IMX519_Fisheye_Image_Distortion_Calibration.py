@@ -22,11 +22,6 @@ from matplotlib.path import Path
 
 class SingleCameraFisheyeDistortionCorrectionV4:
     def __init__(self):
-        # Cropping parameters (from GUI_IMX708_Dirsotion_Correction_v1.1.py)
-        self.crop_params = {
-            'cam0': {'width': 3950, 'start_x': 0, 'height': 3496}  # Single camera
-        }
-        
         # Processing parameters for PROPER FISHEYE DOT PATTERN analysis
         self.num_coef = 5  # Number of polynomial coefficients for fisheye
         self.sigma_normalization = 20  # FFT normalization (10 like the example)
@@ -35,8 +30,8 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         self.dot_pattern_params = {
             'cam0': {
                 'binarization_ratio': 0.8,  # Ratio for binarization
-                'size_distance_ratio': 0.3,  # Ratio for size/distance calculation
-                'slope_ratio': 0.3           # Ratio for slope calculation
+                'size_distance_ratio': 0.75,  # Ratio for size/distance calculation
+                'slope_ratio': 0.75           # Ratio for slope calculation
             }
         }
 
@@ -98,6 +93,7 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         # Toggle options
         self.apply_masking = 1  # Set to 1 to enable polygon masking
         self.interactive_polygon_drawing = 0  # Set to 1 to enable interactive polygon drawing
+        self.manual_dot_removal = 1  # Set to 1 to enable manual dot removal GUI
         self.test_images = 0  # Set to 1 to test images
         self.debug_plots = 1  # Set to 1 to enable debug plots
         self.save_intermediate = 1  # Set to 1 to save intermediate images
@@ -189,17 +185,7 @@ class SingleCameraFisheyeDistortionCorrectionV4:
             print(f"[ERROR] Failed to load image file {filepath}: {e}")
             return None, None
     
-    def crop_image(self, image, cam_name):
-        """Crop image according to camera-specific parameters"""
-        params = self.crop_params[cam_name]
-        start_x = params['start_x']
-        width = params['width']
-        height = params['height']
-        
-        # Crop the image: [y_start:y_end, x_start:x_end]
-        cropped = image[:height, start_x:start_x + width]
-        print(f"   Cropped {cam_name}: {image.shape} -> {cropped.shape}")
-        return cropped
+
     
    
     def create_polygon_mask(self, image, cam_name, output_dir=None):
@@ -422,6 +408,275 @@ class SingleCameraFisheyeDistortionCorrectionV4:
             print(f"[ERROR] Failed to save JPEG {output_path}: {e}")
             return False
 
+    def manual_dot_removal_gui(self, image, list_hor_lines, list_ver_lines, cam_name, output_dir):
+        """
+        Interactive GUI for manual dot removal and line recalculation
+        
+        Parameters
+        ----------
+        image : array_like
+            Original image for visualization
+        list_hor_lines : list
+            Current horizontal lines
+        list_ver_lines : list
+            Current vertical lines
+        cam_name : str
+            Camera name for display
+        output_dir : str
+            Output directory for saving results
+            
+        Returns
+        -------
+        list_hor_lines : list
+            Updated horizontal lines
+        list_ver_lines : list
+            Updated vertical lines
+        """
+        print(f"      Manual dot removal GUI for {cam_name}...")
+        
+        class DotRemovalGUI:
+            def __init__(self, image, hor_lines, ver_lines, cam_name):
+                self.image = image
+                self.original_hor_lines = hor_lines.copy()
+                self.original_ver_lines = ver_lines.copy()
+                self.current_hor_lines = hor_lines.copy()
+                self.current_ver_lines = ver_lines.copy()
+                self.cam_name = cam_name
+                self.removed_dots = set()
+                self.fig, self.ax = plt.subplots(figsize=(15, 10))
+                self.ax.imshow(image, cmap='gray', origin='lower')
+                self.ax.set_title(f'{cam_name} - Manual Dot Removal\nClick dots to remove, "r" to reset, "a" to accept, "z" to zoom')
+                
+                # Enable zoom and pan
+                self.ax.set_navigate(True)
+                
+                # Connect events
+                self.fig.canvas.mpl_connect('button_press_event', self.on_click)
+                self.fig.canvas.mpl_connect('key_press_event', self.on_key)
+                
+                self.update_plot()
+                self.accepted = False
+                
+            def on_click(self, event):
+                if event.inaxes != self.ax:
+                    return
+                    
+                if event.button == 1:  # Left click - remove nearest dot
+                    self.remove_nearest_dot(event.xdata, event.ydata)
+                    
+            def on_key(self, event):
+                if event.key == 'r':  # Reset
+                    self.reset_to_original()
+                elif event.key == 'a':  # Accept
+                    self.accept_changes()
+                    
+            def remove_nearest_dot(self, x, y):
+                # Find nearest dot in current lines
+                min_dist = float('inf')
+                nearest_line_idx = None
+                nearest_dot_idx = None
+                line_type = None
+                
+                # Check horizontal lines
+                for i, line in enumerate(self.current_hor_lines):
+                    if len(line) == 0:
+                        continue
+                    for j, dot in enumerate(line):
+                        dist = np.sqrt((dot[1] - x)**2 + (dot[0] - y)**2)
+                        if dist < min_dist and dist < 20:  # Within 20 pixels
+                            min_dist = dist
+                            nearest_line_idx = i
+                            nearest_dot_idx = j
+                            line_type = 'hor'
+                
+                # Check vertical lines
+                for i, line in enumerate(self.current_ver_lines):
+                    if len(line) == 0:
+                        continue
+                    for j, dot in enumerate(line):
+                        dist = np.sqrt((dot[1] - x)**2 + (dot[0] - y)**2)
+                        if dist < min_dist and dist < 20:  # Within 20 pixels
+                            min_dist = dist
+                            nearest_line_idx = i
+                            nearest_dot_idx = j
+                            line_type = 'ver'
+                
+                if nearest_line_idx is not None:
+                    try:
+                        # Remove the dot
+                        if line_type == 'hor':
+                            removed_dot = self.current_hor_lines[nearest_line_idx][nearest_dot_idx].copy()
+                            self.current_hor_lines[nearest_line_idx] = np.delete(
+                                self.current_hor_lines[nearest_line_idx], nearest_dot_idx, axis=0)
+                        else:
+                            removed_dot = self.current_ver_lines[nearest_line_idx][nearest_dot_idx].copy()
+                            self.current_ver_lines[nearest_line_idx] = np.delete(
+                                self.current_ver_lines[nearest_line_idx], nearest_dot_idx, axis=0)
+                        
+                        # Remove empty lines
+                        self.current_hor_lines = [line for line in self.current_hor_lines if len(line) > 0]
+                        self.current_ver_lines = [line for line in self.current_ver_lines if len(line) > 0]
+                        
+                        self.removed_dots.add(tuple(removed_dot))
+                        self.update_plot()
+                        print(f"         Removed dot at ({removed_dot[1]:.1f}, {removed_dot[0]:.1f})")
+                    except Exception as e:
+                        print(f"         Error removing dot: {e}")
+                else:
+                    print(f"         No dot found within 20 pixels of click at ({x:.1f}, {y:.1f})")
+                    
+            def reset_to_original(self):
+                self.current_hor_lines = self.original_hor_lines.copy()
+                self.current_ver_lines = self.original_ver_lines.copy()
+                self.removed_dots.clear()
+                self.update_plot()
+                print(f"         Reset to original lines")
+                
+            def accept_changes(self):
+                self.accepted = True
+                plt.close(self.fig)
+                print(f"         Accepted changes: {len(self.removed_dots)} dots removed")
+                
+            def update_plot(self):
+                # Store current view limits to preserve zoom
+                xlim = self.ax.get_xlim()
+                ylim = self.ax.get_ylim()
+                
+                self.ax.clear()
+                self.ax.imshow(self.image, cmap='gray', origin='lower')
+                self.ax.set_title(f'{self.cam_name} - Manual Dot Removal\n'
+                                f'Removed: {len(self.removed_dots)} dots | '
+                                f'Hor lines: {len(self.current_hor_lines)} | '
+                                f'Ver lines: {len(self.current_ver_lines)}\n'
+                                f'Click dots to remove, "r" to reset, "a" to accept')
+                
+                # Plot current lines
+                for line in self.current_hor_lines:
+                    if len(line) > 0:
+                        self.ax.plot(line[:, 1], line[:, 0], "-o", color="red", markersize=3, linewidth=1)
+                for line in self.current_ver_lines:
+                    if len(line) > 0:
+                        self.ax.plot(line[:, 1], line[:, 0], "-o", color="blue", markersize=3, linewidth=1)
+                
+                # Highlight removed dots
+                if self.removed_dots:
+                    removed_x = [dot[1] for dot in self.removed_dots]
+                    removed_y = [dot[0] for dot in self.removed_dots]
+                    self.ax.plot(removed_x, removed_y, "x", color="yellow", markersize=8, linewidth=2)
+                
+                # Restore view limits to preserve zoom
+                if xlim[0] != xlim[1] and ylim[0] != ylim[1]:  # Only if we have valid limits
+                    self.ax.set_xlim(xlim)
+                    self.ax.set_ylim(ylim)
+                
+                self.fig.canvas.draw()
+        
+        # Create and show the GUI
+        gui = DotRemovalGUI(image, list_hor_lines, list_ver_lines, cam_name)
+        plt.show()
+        
+        if gui.accepted:
+            # Recalculate lines based on remaining dots
+            print(f"      Recalculating lines after manual removal for {cam_name}...")
+            
+            # Collect all remaining dots
+            remaining_dots = []
+            for line in gui.current_hor_lines:
+                remaining_dots.extend(line.tolist())
+            for line in gui.current_ver_lines:
+                remaining_dots.extend(line.tolist())
+            
+            if len(remaining_dots) > 0:
+                remaining_dots = np.array(remaining_dots)
+                
+                # Recalculate slopes and distances
+                dot_params = self.dot_pattern_params[cam_name]
+                group_params = self.grouping_params[cam_name]
+                
+                # Recalculate slopes from remaining dots
+                # Create a temporary binary image from remaining dots for slope calculation
+                temp_binary = np.zeros_like(image, dtype=bool)
+                for dot in remaining_dots:
+                    y, x = int(dot[0]), int(dot[1])
+                    if 0 <= y < temp_binary.shape[0] and 0 <= x < temp_binary.shape[1]:
+                        temp_binary[y, x] = True
+                
+                slope_hor = prep.calc_hor_slope(temp_binary, ratio=dot_params['slope_ratio'])
+                slope_ver = prep.calc_ver_slope(temp_binary, ratio=dot_params['slope_ratio'])
+                
+                # Ensure we have valid distance values
+                dot_dist = self.dot_parameters[cam_name].get('dot_dist')
+                if dot_dist is None:
+                    # Try to get from original calculation or use default
+                    dot_dist = self.dot_parameters[cam_name].get('dot_dist', 162)
+                    if dot_dist is None:
+                        dot_dist = 162  # Final fallback
+                
+                dist_hor = dist_ver = dot_dist
+                
+                # Regroup dots into lines
+                try:
+                    recalc_hor_lines = prep.group_dots_hor_lines_based_polyfit(
+                        remaining_dots, slope_hor, dist_hor,
+                        ratio=group_params['ratio'],
+                        num_dot_miss=group_params['num_dot_miss'],
+                        accepted_ratio=group_params['accepted_ratio'],
+                        order=group_params['order'])
+                    
+                    recalc_ver_lines = prep.group_dots_ver_lines_based_polyfit(
+                        remaining_dots, slope_ver, dist_ver,
+                        ratio=group_params['ratio'],
+                        num_dot_miss=group_params['num_dot_miss'],
+                        accepted_ratio=group_params['accepted_ratio'],
+                        order=group_params['order'])
+                    
+                    # Remove residual dots again
+                    recalc_hor_lines = prep.remove_residual_dots_hor(recalc_hor_lines, slope_hor, 
+                                                                   group_params['residual_threshold'])
+                    recalc_ver_lines = prep.remove_residual_dots_ver(recalc_ver_lines, slope_ver, 
+                                                                   group_params['residual_threshold'])
+                    
+                    print(f"      {cam_name}: After recalculation - {len(recalc_hor_lines)} hor lines, {len(recalc_ver_lines)} ver lines")
+                except Exception as e:
+                    print(f"      Warning: Line recalculation failed for {cam_name}: {e}")
+                    print(f"      Using original lines without manual removal")
+                    return list_hor_lines, list_ver_lines
+                
+                # Save manual removal results
+                if self.save_intermediate:
+                    # Save visualization of manual removal
+                    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+                    
+                    # Before manual removal
+                    ax1.imshow(image, cmap='gray', origin='lower')
+                    for line in list_hor_lines:
+                        ax1.plot(line[:, 1], line[:, 0], "-o", color="red", markersize=2, linewidth=1)
+                    for line in list_ver_lines:
+                        ax1.plot(line[:, 1], line[:, 0], "-o", color="blue", markersize=2, linewidth=1)
+                    ax1.set_title(f"{cam_name} - Before Manual Removal\n{len(list_hor_lines)} hor, {len(list_ver_lines)} ver")
+                    ax1.axis('off')
+                    
+                    # After manual removal
+                    ax2.imshow(image, cmap='gray', origin='lower')
+                    for line in recalc_hor_lines:
+                        ax2.plot(line[:, 1], line[:, 0], "-o", color="red", markersize=2, linewidth=1)
+                    for line in recalc_ver_lines:
+                        ax2.plot(line[:, 1], line[:, 0], "-o", color="blue", markersize=2, linewidth=1)
+                    ax2.set_title(f"{cam_name} - After Manual Removal\n{len(recalc_hor_lines)} hor, {len(recalc_ver_lines)} ver")
+                    ax2.axis('off')
+                    
+                    plt.tight_layout()
+                    plt.savefig(f"{output_dir}/manual_removal_comparison.png", dpi=150, bbox_inches='tight')
+                    plt.close()
+                
+                return recalc_hor_lines, recalc_ver_lines
+            else:
+                print(f"      Warning: No dots remaining after manual removal for {cam_name}")
+                return list_hor_lines, list_ver_lines
+        else:
+            print(f"      Manual removal cancelled for {cam_name}")
+            return list_hor_lines, list_ver_lines
+
     def process_fisheye_dot_pattern(self, image, cam_name, output_dir):
         """Process fisheye dot pattern following Discorpy_Fisheye_Example.py exactly"""
         print(f"      Processing {cam_name} using proper fisheye dot pattern workflow...")
@@ -541,6 +796,14 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         
         print(f"      {cam_name}: After residual removal - {len(list_hor_lines)} hor lines, {len(list_ver_lines)} ver lines")
         
+        # Step 8.5: Manual dot removal GUI
+        if self.manual_dot_removal:
+            print(f"      Step 8.5: Manual dot removal for {cam_name}...")
+            list_hor_lines, list_ver_lines = self.manual_dot_removal_gui(
+                img_norm, list_hor_lines, list_ver_lines, cam_name, output_dir)
+        else:
+            print(f"      Step 8.5: Manual dot removal skipped for {cam_name}")
+        
         # Debug visualization
         if self.debug_plots:
             fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
@@ -584,61 +847,104 @@ class SingleCameraFisheyeDistortionCorrectionV4:
             losa.save_plot_image(f"{output_dir}/03_vertical_lines.png", list_ver_lines, height, width)
         
         # Step 9: Find center of distortion using vanishing points (following the example)
+        
+         # Regenerate grid points with the correction of perspective effect.
+        if self.fisheye_params['enable_perspective_correction']:
+            list_hor_lines1, list_ver_lines1 = proc.regenerate_grid_points_parabola(
+            list_hor_lines, list_ver_lines, perspective=True)
+        else:
+            list_hor_lines1, list_ver_lines1 = list_hor_lines, list_ver_lines
+        
+        
+        #find center of distortion
         print(f"      Step 9: Find center of distortion for {cam_name}...")
         try:
             xcenter, ycenter = proc.find_center_based_vanishing_points_iteration(
-                list_hor_lines, list_ver_lines, 
+                list_hor_lines1, list_ver_lines1, 
                 iteration=self.fisheye_params['vanishing_point_iterations'])
             print(f"      {cam_name}: Center of distortion: X={xcenter:.4f}, Y={ycenter:.4f}")
         except Exception as e:
             print(f"      Warning: Vanishing point method failed for {cam_name}, using coarse method: {e}")
-            xcenter, ycenter = proc.find_cod_coarse(list_hor_lines, list_ver_lines)
+            xcenter, ycenter = proc.find_cod_coarse(list_hor_lines1, list_ver_lines1)
             print(f"      {cam_name}: Center of distortion (coarse): X={xcenter:.4f}, Y={ycenter:.4f}")
         
         # Step 10: Correct perspective distortion (following the example)
-        print(f"      Step 10: Correct perspective effect for {cam_name}...")
-        if self.fisheye_params['enable_perspective_correction']:
-            try:
-                corr_hor_lines, corr_ver_lines = proc.correct_perspective_effect(
-                    list_hor_lines, list_ver_lines, xcenter, ycenter)
-                print(f"      {cam_name}: Perspective correction applied")
+        # print(f"      Step 10: Correct perspective effect for {cam_name}...")
+        # if self.fisheye_params['enable_perspective_correction']:
+        #     try:
+        #         corr_hor_lines, corr_ver_lines = proc.correct_perspective_effect(
+        #             list_hor_lines, list_ver_lines, xcenter, ycenter)
+        #         print(f"      {cam_name}: Perspective correction applied")
                
-            except Exception as e:
-                print(f"      Warning: Perspective correction failed for {cam_name}, using original lines: {e}")
-                corr_hor_lines, corr_ver_lines = list_hor_lines, list_ver_lines
-        else:
-            corr_hor_lines, corr_ver_lines = list_hor_lines, list_ver_lines
-            print(f"      {cam_name}: Perspective correction skipped")
+        #     except Exception as e:
+        #         print(f"      Warning: Perspective correction failed for {cam_name}, using original lines: {e}")
+        #         corr_hor_lines, corr_ver_lines = list_hor_lines, list_ver_lines
+        # else:
+        #     corr_hor_lines, corr_ver_lines = list_hor_lines, list_ver_lines
+        #     print(f"      {cam_name}: Perspective correction skipped")
+
         
-           # Close the figure to free memory
+        
 
 
         # Step 11: Calculate polynomial coefficients (following the example)
-        print(f"      Step 11: Calculate radial distortion coefficients for {cam_name}...")
-        try:
-            list_bfact = proc.calc_coef_backward(corr_hor_lines, corr_ver_lines, 
+        # print(f"      Step 11: Calculate radial distortion coefficients for {cam_name}...")
+        # try:
+        #     list_bfact = proc.calc_coef_backward(corr_hor_lines, corr_ver_lines, 
+        #                                        xcenter, ycenter, self.num_coef)
+        #     print(f"      {cam_name}: Polynomial coefficients: {list_bfact}")
+        # except Exception as e:
+        #     print(f"      Error: Failed to calculate coefficients for {cam_name}: {e}")
+        #     list_bfact = [1.0] + [0.0] * (self.num_coef - 1)
+        #     print(f"      {cam_name}: Using default coefficients: {list_bfact}")
+
+        #step 11.5: calculate coefs, unwarp lines using a forward model
+        if self.fisheye_params['enable_perspective_correction']:
+            list_ffact= proc.calc_coef_forward(list_hor_lines1, list_ver_lines1, 
                                                xcenter, ycenter, self.num_coef)
-            print(f"      {cam_name}: Polynomial coefficients: {list_bfact}")
-        except Exception as e:
+            print(f"      {cam_name}: Polynomial coefficients: {list_ffact}")
+           
+           
+        else:
             print(f"      Error: Failed to calculate coefficients for {cam_name}: {e}")
-            list_bfact = [1.0] + [0.0] * (self.num_coef - 1)
-            print(f"      {cam_name}: Using default coefficients: {list_bfact}")
+            list_ffact = [1.0] + [0.0] * (self.num_coef - 1)
+            print(f"      {cam_name}: Using default coefficients: {list_ffact}")
+
+        #calculate unwarped lines using a forward model
+        list_hor_lines2, list_ver_lines2 = proc.regenerate_grid_points_parabola(list_hor_lines, list_ver_lines, perspective=False)
+
+        list_uhor_lines = post.unwarp_line_forward(list_hor_lines2, xcenter, ycenter, list_ffact)
+        list_uver_lines = post.unwarp_line_forward(list_ver_lines2, xcenter, ycenter, list_ffact)
         
-        # Save coefficients
-        losa.save_metadata_txt(f"{output_dir}/coefficients_radial_distortion.txt", xcenter, ycenter, list_bfact)
-        losa.save_metadata_json(f"{output_dir}/distortion_parameters.json", xcenter, ycenter, list_bfact)
+        #check residual of unwarped lines
+        list_hor_data = post.calc_residual_hor(list_uhor_lines, xcenter, ycenter)
+        list_ver_data = post.calc_residual_ver(list_uver_lines, xcenter, ycenter)
+        losa.save_residual_plot(f"{output_dir}/hor_residual_after_correction.png",list_hor_data, height, width)
+        losa.save_residual_plot(f"{output_dir}/ver_residual_after_correction.png", list_ver_data, height, width)
+
         
         # Calculate unwarped lines (needed for both intermediate saving and perspective coefficients)
-        print(f"      Step 12: Calculate unwarped lines for {cam_name}...")
-        try:
-            # Test correction on lines
-            list_uhor_lines = post.unwarp_line_backward(corr_hor_lines, xcenter, ycenter, list_bfact)
-            list_uver_lines = post.unwarp_line_backward(corr_ver_lines, xcenter, ycenter, list_bfact)
-            print(f"      {cam_name}: Unwarped lines calculated successfully")
-        except Exception as e:
-            print(f"      Warning: Could not calculate unwarped lines for {cam_name}: {e}")
-            list_uhor_lines = corr_hor_lines
-            list_uver_lines = corr_ver_lines
+        # print(f"      Step 12: Calculate unwarped lines for {cam_name}...")
+        # try:
+        #     # Test correction on lines
+        #     list_uhor_lines = post.unwarp_line_backward(corr_hor_lines, xcenter, ycenter, list_bfact)
+        #     list_uver_lines = post.unwarp_line_backward(corr_ver_lines, xcenter, ycenter, list_bfact)
+        #     print(f"      {cam_name}: Unwarped lines calculated successfully")
+        # except Exception as e:
+        #     print(f"      Warning: Could not calculate unwarped lines for {cam_name}: {e}")
+        #     list_uhor_lines = corr_hor_lines
+        #     list_uver_lines = corr_ver_lines
+
+        # if self.save_intermediate:   #to check results
+        #             list_hor_coef, _ = proc._para_fit_hor(corr_hor_lines, xcenter, ycenter)
+        #             list_ver_coef, _ = proc._para_fit_ver(corr_ver_lines, xcenter, ycenter)
+        #             plt.plot(list_hor_coef[:, 2], -list_hor_coef[:, 1], "-o", color="red", label="horizontal")
+        #             plt.plot(list_ver_coef[:, 2], list_ver_coef[:, 1], "-o", color="blue", label="vertical")
+        #             plt.legend(loc="upper left")
+        #             plt.xlabel("c-coefficient")
+        #             plt.ylabel("b-coefficient", labelpad=-5)
+        #             plt.savefig(f"{output_dir}/persp_dist_correction.png", dpi=150, bbox_inches='tight')
+        #             plt.close()
         
         # Save intermediate results if enabled
         if self.save_intermediate:
@@ -648,6 +954,13 @@ class SingleCameraFisheyeDistortionCorrectionV4:
                 # Save corrected line plots
                 losa.save_plot_image(f"{output_dir}/04_unwarpped_horizontal_lines.png", list_uhor_lines, height, width)
                 losa.save_plot_image(f"{output_dir}/04_unwarpped_vertical_lines.png", list_uver_lines, height, width)
+                
+                #get backward coefs from forward
+                list_bfact = proc.transform_coef_backward_and_forward(list_ffact, mapping='forward')
+
+                 # Save coefficients
+                losa.save_metadata_txt(f"{output_dir}/coefficients_radial_distortion.txt", xcenter, ycenter, list_bfact)
+                losa.save_metadata_json(f"{output_dir}/distortion_parameters.json", xcenter, ycenter, list_bfact)
                 
                 # Apply correction to the image (following the example)
                 img_corr = util.unwarp_color_image_backward(image, xcenter, ycenter, list_bfact, 
@@ -717,7 +1030,7 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         os.makedirs(output_dir, exist_ok=True)
         
         # Save input image
-        self.save_jpeg_from_array(image, f"{output_dir}/00_input_cropped.jpg")
+        self.save_jpeg_from_array(image, f"{output_dir}/00_input.jpg")
         
         # Process camera using the proper fisheye dot pattern workflow
         print(f"\n   Processing camera (cam0)...")
@@ -729,8 +1042,7 @@ class SingleCameraFisheyeDistortionCorrectionV4:
                 'xcenter': float(xcenter),
                 'ycenter': float(ycenter),
                 'coeffs': [float(c) for c in coeffs],
-                'pers_coef': [float(c) for c in self.results['cam0']['pers_coef']] if self.results['cam0']['pers_coef'] is not None else None,
-                'crop_params': self.crop_params['cam0']
+                'pers_coef': [float(c) for c in self.results['cam0']['pers_coef']] if self.results['cam0']['pers_coef'] is not None else None
             }
         }
         
@@ -756,16 +1068,12 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         if gray is None:
             raise ValueError("Failed to load DNG file")
         
-        # Crop image
-        cropped = self.crop_image(gray, 'cam0')
-        
-        # Save cropped RGB version as JPEG
-        rgb_cropped = self.crop_image(rgb, 'cam0')
-        self.save_jpeg_from_array(rgb_cropped, f"{output_base}/cam0_cropped.jpg")
+        # Save RGB version as JPEG
+        self.save_jpeg_from_array(rgb, f"{output_base}/cam0.jpg")
         
         # Process camera using proper fisheye workflow
         try:
-            results = self.process_single_camera(cropped, output_base)
+            results = self.process_single_camera(gray, output_base)
             
             # Save results
             with open(f"{output_base}/distortion_coefficients.json", 'w') as f:
@@ -781,7 +1089,7 @@ class SingleCameraFisheyeDistortionCorrectionV4:
                     f.write(f"  Perspective Coefficients: {results['cam0']['pers_coef']}\n")
                 else:
                     f.write(f"  Perspective Coefficients: Not calculated\n")
-                f.write(f"  Crop: {self.crop_params['cam0']}\n\n")
+                f.write(f"  Image size: {gray.shape}\n\n")
                 
                 f.write(f"Processing parameters:\n")
                 f.write(f"  Number of coefficients: {self.num_coef}\n")
@@ -867,8 +1175,8 @@ class SingleCameraFisheyeDistortionCorrectionV4:
             print(f"Failed to load test image")
             return
         
-        # Crop test image
-        test_cropped = self.crop_image(test_rgb, 'cam0')
+        # Use test image as-is (no cropping)
+        test_cropped = test_rgb
         
         # Apply correction using stored results
         xcenter = self.results['cam0']['xcenter']
@@ -905,8 +1213,9 @@ def main():
     dng_path = filedialog.askopenfilename(
         title="Select Camera DNG Calibration File",
         filetypes=[
-            ("DNG files", "*.dng"),
-            ("All files", "*.*")
+            ("All files", "*.*"),
+            ("DNG files", "*.dng")
+            
         ],
         initialdir=r"C:\Users\NoahB\Documents\HebrewU Bioengineering\Equipment\Camera"
     )
@@ -960,6 +1269,16 @@ def main():
         "when calibration target isn't perfectly parallel to camera."
     )
     
+    # Ask about manual dot removal
+    manual_removal_response = messagebox.askyesno(
+        "Manual Dot Removal",
+        "Enable manual dot removal GUI?\n\n"
+        "YES = Show interactive GUI to manually remove unwanted dots\n"
+        "NO = Skip manual removal and use automatic detection only\n\n"
+        "Manual removal allows you to click on dots to remove them,\n"
+        "then recalculate lines based on remaining dots."
+    )
+    
     # Configure masking
     if masking_response is None:  # Cancel - disable masking
         masking_enabled = False
@@ -986,6 +1305,7 @@ def main():
     processor.save_intermediate = 1 if debug_enabled else 0
     processor.apply_masking = 1 if masking_enabled else 0
     processor.interactive_polygon_drawing = 1 if interactive_polygon else 0
+    processor.manual_dot_removal = 1 if manual_removal_response else 0
     processor.save_perspective_coefficients = 1 if perspective_response else 0
     processor.test_images = 0  # Can be enabled separately if needed
     
@@ -996,6 +1316,7 @@ def main():
     print(f"  Polygon masking: {'Enabled' if processor.apply_masking else 'Disabled'}")
     if processor.apply_masking:
         print(f"  Interactive polygon drawing: {'Enabled' if processor.interactive_polygon_drawing else 'Disabled (using V1 defaults)'}")
+    print(f"  Manual dot removal: {'Enabled' if processor.manual_dot_removal else 'Disabled'}")
     print(f"  Number of coefficients: {processor.num_coef}")
     print(f"  FFT normalization sigma: {processor.sigma_normalization}")
     print(f"  Vanishing point iterations: {processor.fisheye_params['vanishing_point_iterations']}")
