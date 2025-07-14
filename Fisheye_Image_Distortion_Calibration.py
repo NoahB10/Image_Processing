@@ -31,20 +31,22 @@ class DualCameraFisheyeDistortionCorrectionV4:
         }
         
         # Processing parameters for PROPER FISHEYE DOT PATTERN analysis
-        self.num_coef = 6  # Number of polynomial coefficients for fisheye
-        self.sigma_normalization = 40  # FFT normalization (10 like the example)
+        self.num_coef = 5  # Number of polynomial coefficients for fisheye
+        self.sigma_normalization = 60  # FFT normalization (10 like the example)
         
         # Dot pattern parameters (following Discorpy_Fisheye_Example.py)
         self.dot_pattern_params = {
             'cam0': {
-                'binarization_ratio': 0.8,  # Ratio for binarization
-                'size_distance_ratio': 0.7,  # Ratio for size/distance calculation
-                'slope_ratio': 0.7           # Ratio for slope calculation
+                'binarization_ratio': 0.75,  # Ratio for binarization
+                'size_distance_ratio': 0.75,  # Ratio for size/distance calculation
+                'slope_ratio': 0.75,           # Ratio for slope calculation
+                'dot_removal_size':0.8
             },
             'cam1': {
-                'binarization_ratio': 0.8,
-                'size_distance_ratio': 0.7,
-                'slope_ratio': 0.7
+                'binarization_ratio': 0.75,
+                'size_distance_ratio': 0.75,
+                'slope_ratio': 0.75,
+                'dot_removal_size': 0.8
             }
         }
 
@@ -129,14 +131,14 @@ class DualCameraFisheyeDistortionCorrectionV4:
         # Grouping parameters (following Discorpy_Fisheye_Example.py exactly)
         self.grouping_params = {
             'cam0': {
-                'ratio': 0.4,               # Grouping tolerance ratio (from example)
+                'ratio': 0.2,               # Grouping tolerance ratio (from example)
                 'num_dot_miss': 3,          # Number of missing dots allowed between two dot
                 'accepted_ratio': 0.55,     # Acceptance ratio for grouping
                 'order': 2,                 # Polynomial order for polyfit
                 'residual_threshold': 3   # Residual threshold (from example)
             },
             'cam1': {
-                'ratio': 0.4,
+                'ratio': 0.18,
                 'num_dot_miss': 3,
                 'accepted_ratio': 0.55,
                 'order': 2,
@@ -153,9 +155,9 @@ class DualCameraFisheyeDistortionCorrectionV4:
         
         # Perspective correction parameters (like V3)
         self.perspective_params = {
-            'equal_dist': True,     # Equal distance for perspective correction
+            'equal_dist': False,     # Equal distance for perspective correction
             'scale': 'mean',        # Scale method ('mean' or other)
-            'optimizing': True     # Optimizing parameter
+            'optimizing': False     # Optimizing parameter
         }
         
         # Toggle options
@@ -784,6 +786,12 @@ class DualCameraFisheyeDistortionCorrectionV4:
                 if dot_dist is None:
                     dot_dist = 35.2  # Default from demo_05.py
  
+        # Remove non-dot objects
+        mat1 = prep.select_dots_based_size(mat1, dot_size, ratio=self.dot_pattern_params[cam_name]['binarization_ratio'])
+        # Remove non-elliptical objects
+        mat1 = prep.select_dots_based_ratio(mat1, ratio=self.dot_pattern_params[cam_name]['dot_removal_size'])
+        if self.save_intermediate:
+            losa.save_image(f"{output_dir}/02_binarized_cleaned.jpg", mat1)
 
         # Step 4: Calculate slopes (following the example)
         print(f"      Step 4: Calculate slopes for {cam_name}...")
@@ -796,7 +804,7 @@ class DualCameraFisheyeDistortionCorrectionV4:
         
         # Step 5: Extract ALL reference points (modified to get all dot pixels)
         print(f"      Step 5: Extract ALL dot points for {cam_name}...")
-        list_points = prep.get_points_dot_pattern(mat1, binarize=False)  # Get ALL dot pixels, not just centroids
+        list_points = prep.get_points_dot_pattern(mat1, binarize=False,ratio=0.5)  # Get ALL dot pixels, not just centroids
         list_points_hor_lines = list_points
         list_points_ver_lines = np.copy(list_points)
         
@@ -903,70 +911,131 @@ class DualCameraFisheyeDistortionCorrectionV4:
             losa.save_plot_image(f"{output_dir}/03_vertical_lines.png", list_ver_lines, height, width)
         
         # Step 9: Find center of distortion using vanishing points (following the example)
+        
+        # Regenerate grid points with the correction of perspective effect.
+        if self.fisheye_params['enable_perspective_correction']:
+            list_hor_lines1, list_ver_lines1 = proc.regenerate_grid_points_parabola(
+            list_hor_lines, list_ver_lines, perspective=True)
+        else:
+            list_hor_lines1, list_ver_lines1 = list_hor_lines, list_ver_lines
+       
+        #find center of distortion
         print(f"      Step 9: Find center of distortion for {cam_name}...")
         try:
             xcenter, ycenter = proc.find_center_based_vanishing_points_iteration(
-                list_hor_lines, list_ver_lines, 
+                list_hor_lines1, list_ver_lines1, 
                 iteration=self.fisheye_params['vanishing_point_iterations'])
             print(f"      {cam_name}: Center of distortion: X={xcenter:.4f}, Y={ycenter:.4f}")
         except Exception as e:
             print(f"      Warning: Vanishing point method failed for {cam_name}, using coarse method: {e}")
-            xcenter, ycenter = proc.find_cod_coarse(list_hor_lines, list_ver_lines)
+            xcenter, ycenter = proc.find_cod_coarse(list_hor_lines1, list_ver_lines1)
             print(f"      {cam_name}: Center of distortion (coarse): X={xcenter:.4f}, Y={ycenter:.4f}")
         
         # Step 10: Correct perspective distortion (following the example)
-        print(f"      Step 10: Correct perspective effect for {cam_name}...")
-        if self.fisheye_params['enable_perspective_correction']:
-            try:
-                corr_hor_lines, corr_ver_lines = proc.correct_perspective_effect(
-                    list_hor_lines, list_ver_lines, xcenter, ycenter)
-                print(f"      {cam_name}: Perspective correction applied")
-            except Exception as e:
-                print(f"      Warning: Perspective correction failed for {cam_name}, using original lines: {e}")
-                corr_hor_lines, corr_ver_lines = list_hor_lines, list_ver_lines
-        else:
-            corr_hor_lines, corr_ver_lines = list_hor_lines, list_ver_lines
-            print(f"      {cam_name}: Perspective correction skipped")
-        
+        # print(f"      Step 10: Correct perspective effect for {cam_name}...")
+        # if self.fisheye_params['enable_perspective_correction']:
+        #     try:
+        #         corr_hor_lines, corr_ver_lines = proc.correct_perspective_effect(
+        #             list_hor_lines, list_ver_lines, xcenter, ycenter)
+        #         print(f"      {cam_name}: Perspective correction applied")
+                 
+        #         if self.save_intermediate:   #to check results
+        #             list_hor_coef, _ = proc._para_fit_hor(corr_hor_lines, xcenter, ycenter)
+        #             list_ver_coef, _ = proc._para_fit_ver(corr_ver_lines, xcenter, ycenter)
+        #             plt.plot(list_hor_coef[:, 2], -list_hor_coef[:, 1], "-o", color="red", label="horizontal")
+        #             plt.plot(list_ver_coef[:, 2], list_ver_coef[:, 1], "-o", color="blue", label="vertical")
+        #             plt.legend(loc="upper left")
+        #             plt.xlabel("c-coefficient")
+        #             plt.ylabel("b-coefficient", labelpad=-5)
+        #             plt.savefig(f"{output_dir}/persp_dist_correction.png", dpi=150, bbox_inches='tight')
+        #             plt.close()
+                
+        #     except Exception as e:
+        #         print(f"      Warning: Perspective correction failed for {cam_name}, using original lines: {e}")
+        #         corr_hor_lines, corr_ver_lines = list_hor_lines, list_ver_lines
+        # else:
+        #     corr_hor_lines, corr_ver_lines = list_hor_lines, list_ver_lines
+        #     print(f"      {cam_name}: Perspective correction skipped")
+                
         # Step 11: Calculate polynomial coefficients (following the example)
-        print(f"      Step 11: Calculate radial distortion coefficients for {cam_name}...")
-        try:
-            list_bfact = proc.calc_coef_backward(corr_hor_lines, corr_ver_lines, 
+        # print(f"      Step 11: Calculate radial distortion coefficients for {cam_name}...")
+        # try:
+        #     list_bfact = proc.calc_coef_backward(list_hor_lines1, list_ver_lines1, 
+        #                                        xcenter, ycenter, self.num_coef)
+        #     print(f"      {cam_name}: Polynomial coefficients: {list_bfact}")
+        # except Exception as e:
+        #     print(f"      Error: Failed to calculate coefficients for {cam_name}: {e}")
+        #     list_bfact = [1.0] + [0.0] * (self.num_coef - 1)
+        #     print(f"      {cam_name}: Using default coefficients: {list_bfact}")
+
+        # step 11.5: calculate coefs, unwarp lines using a forward model
+        if self.fisheye_params['enable_perspective_correction']:
+            list_ffact= proc.calc_coef_forward(list_hor_lines1, list_ver_lines1, 
                                                xcenter, ycenter, self.num_coef)
-            print(f"      {cam_name}: Polynomial coefficients: {list_bfact}")
-        except Exception as e:
+            print(f"      {cam_name}: Polynomial coefficients: {list_ffact}")
+           
+            list_bfact = proc.transform_coef_backward_and_forward(list_ffact, mapping='forward')
+        else:
             print(f"      Error: Failed to calculate coefficients for {cam_name}: {e}")
-            list_bfact = [1.0] + [0.0] * (self.num_coef - 1)
-            print(f"      {cam_name}: Using default coefficients: {list_bfact}")
-        
+            list_ffact = [1.0] + [0.0] * (self.num_coef - 1)
+            print(f"      {cam_name}: Using default coefficients: {list_ffact}")
+
+        #calculate unwarped lines using a forward model
+        list_hor_lines2, list_ver_lines2 = proc.regenerate_grid_points_parabola(list_hor_lines, list_ver_lines, perspective=False)
+
+        list_uhor_lines = post.unwarp_line_forward(list_hor_lines2, xcenter, ycenter, list_ffact)
+        list_uver_lines = post.unwarp_line_forward(list_ver_lines2, xcenter, ycenter, list_ffact)
+
+
         # Save coefficients
-        losa.save_metadata_txt(f"{output_dir}/coefficients_radial_distortion.txt", xcenter, ycenter, list_bfact)
-        losa.save_metadata_json(f"{output_dir}/distortion_parameters.json", xcenter, ycenter, list_bfact)
+        losa.save_metadata_txt(f"{output_dir}/coefficients_radial_distortion.txt", xcenter, ycenter, list_ffact)
+        losa.save_metadata_json(f"{output_dir}/distortion_parameters.json", xcenter, ycenter, list_ffact)
         
-        # Calculate unwarped lines (needed for both intermediate saving and perspective coefficients)
-        print(f"      Step 12: Calculate unwarped lines for {cam_name}...")
-        try:
-            # Test correction on lines
-            list_uhor_lines = post.unwarp_line_backward(corr_hor_lines, xcenter, ycenter, list_bfact)
-            list_uver_lines = post.unwarp_line_backward(corr_ver_lines, xcenter, ycenter, list_bfact)
-            print(f"      {cam_name}: Unwarped lines calculated successfully")
-        except Exception as e:
-            print(f"      Warning: Could not calculate unwarped lines for {cam_name}: {e}")
-            list_uhor_lines = corr_hor_lines
-            list_uver_lines = corr_ver_lines
+        #Calculate unwarped lines (needed for both intermediate saving and perspective coefficients)
+        # print(f"      Step 12: Calculate unwarped lines for {cam_name}...")
+        # try:
+        #     # Test correction on lines
+        #     list_uhor_lines = post.unwarp_line_backward(corr_hor_lines, xcenter, ycenter, list_bfact)
+        #     list_uver_lines = post.unwarp_line_backward(corr_ver_lines, xcenter, ycenter, list_bfact)
+        #     print(f"      {cam_name}: Unwarped lines calculated successfully")
+        # except Exception as e:
+        #     print(f"      Warning: Could not calculate unwarped lines for {cam_name}: {e}")
+        #     list_uhor_lines = corr_hor_lines
+        #     list_uver_lines = corr_ver_lines
         
         # Save intermediate results if enabled
         if self.save_intermediate:
             print(f"      Step 13: Save correction results for {cam_name}...")
             
             try:
-                # Save corrected line plots
-                losa.save_plot_image(f"{output_dir}/04_unwarpped_horizontal_lines.png", list_uhor_lines, height, width)
-                losa.save_plot_image(f"{output_dir}/04_unwarpped_vertical_lines.png", list_uver_lines, height, width)
+                # Save corrected line plots with proper centering
+              
+                padded_height = height + 2 * self.fisheye_params['padding']
+                padded_width = width + 2 * self.fisheye_params['padding']
+                
+                # Shift line coordinates to center them in the padded image
+                def shift_lines_for_padding(lines):
+                    shifted_lines = []
+                    for line in lines:
+                        if len(line) > 0:
+                            # Shift coordinates by padding amount
+                            shifted_line = line.copy()
+                            shifted_line[:, 0] += self.fisheye_params['padding']  # Shift y coordinates (rows)
+                            shifted_line[:, 1] += self.fisheye_params['padding']  # Shift x coordinates (columns)
+                            shifted_lines.append(shifted_line)
+                    return shifted_lines
+                
+                # Apply padding shift to unwarped lines
+                shifted_uhor_lines = shift_lines_for_padding(list_uhor_lines)
+                shifted_uver_lines = shift_lines_for_padding(list_uver_lines)
+                
+                losa.save_plot_image(f"{output_dir}/04_unwarpped_horizontal_lines.png", shifted_uhor_lines, padded_height, padded_width)
+                losa.save_plot_image(f"{output_dir}/04_unwarpped_vertical_lines.png", shifted_uver_lines, padded_height, padded_width)
                 
                 # Apply correction to the image (following the example)
                 img_corr = util.unwarp_color_image_backward(image, xcenter, ycenter, list_bfact, 
                                                           pad=self.fisheye_params['padding'])
+                
                 losa.save_image(f"{output_dir}/05_corrected_image.jpg", img_corr)
                 
                 print(f"      {cam_name}: Correction results saved")
@@ -988,6 +1057,20 @@ class DualCameraFisheyeDistortionCorrectionV4:
                     equal_dist=self.perspective_params['equal_dist'],
                     scale=self.perspective_params['scale'],
                     optimizing=self.perspective_params['optimizing'])
+                
+                # Save plot of source and target points
+                plt.figure(figsize=(12, 10))
+                plt.scatter(source_points[:, 0], source_points[:, 1], c='blue', s=20, alpha=0.7, label='Source Points (Distorted)')
+                plt.scatter(target_points[:, 0], target_points[:, 1], c='red', s=20, alpha=0.7, label='Target Points (Corrected)')
+                plt.xlabel('X coordinate')
+                plt.ylabel('Y coordinate')
+                plt.title(f'{cam_name} - Source vs Target Points for Perspective Correction\n{len(source_points)} source points, {len(target_points)} target points')
+                plt.legend()
+                plt.grid(True, alpha=0.3)
+                plt.axis('equal')  # Ensure equal aspect ratio
+                plt.tight_layout()
+                plt.savefig(f"{output_dir}/source_target_points_plot.png", dpi=150, bbox_inches='tight')
+                plt.close()
                 
                 # Calculate perspective coefficients
                 pers_coef = proc.calc_perspective_coefficients(source_points, target_points, mapping="backward")
@@ -1022,7 +1105,7 @@ class DualCameraFisheyeDistortionCorrectionV4:
         # Store perspective coefficients in results
         self.results[cam_name]['pers_coef'] = pers_coef
         
-        return xcenter, ycenter, list_bfact
+        return xcenter, ycenter, list_ffact
 
     def process_both_cameras_parallel(self, left_image, right_image, output_base):
         """Process both cameras using proper fisheye dot pattern workflow"""
