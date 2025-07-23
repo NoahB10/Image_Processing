@@ -24,22 +24,23 @@ class SingleCameraFisheyeDistortionCorrectionV4:
     def __init__(self):
         # Processing parameters for PROPER FISHEYE DOT PATTERN analysis
         self.num_coef = 5  # Number of polynomial coefficients for fisheye
-        self.sigma_normalization = 20  # FFT normalization (10 like the example)
+        self.sigma_normalization = 30  # FFT normalization (10 like the example)
         
         # Dot pattern parameters (following Discorpy_Fisheye_Example.py)
         self.dot_pattern_params = {
             'cam0': {
                 'binarization_ratio': 0.8,  # Ratio for binarization
-                'size_distance_ratio': 0.75,  # Ratio for size/distance calculation
-                'slope_ratio': 0.75           # Ratio for slope calculation
+                'size_distance_ratio': 0.8,  # Ratio for size/distance calculation
+                'slope_ratio': 0.3,           # Ratio for slope calculation
+                'dot_removal_size': 0.8       # Ratio for dot removal
             }
         }
 
         # Dot parameters (set to None to use calc_size_distance, or specify values)
         self.dot_parameters = {
             'cam0': {
-                'dot_size': None,  # Set to specific value or None to auto-calculate
-                'dot_dist': None   # Set to specific value or None to auto-calculate
+                'dot_size': 25,  # Set to specific value or None to auto-calculate
+                'dot_dist': None  # Set to specific value or None to auto-calculate
             }
         }
         
@@ -72,7 +73,7 @@ class SingleCameraFisheyeDistortionCorrectionV4:
                 'num_dot_miss': 4,          # Number of missing dots allowed
                 'accepted_ratio': 0.65,     # Acceptance ratio for grouping
                 'order': 2,                 # Polynomial order for polyfit
-                'residual_threshold': 10.0   # Residual threshold (from example)
+                'residual_threshold': 3.0   # Residual threshold (from example)
             }
         }
         
@@ -80,7 +81,7 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         self.fisheye_params = {
             'vanishing_point_iterations': 5,  # Iterations for center finding
             'enable_perspective_correction': True,  # Apply perspective correction
-            'padding': 400  # Padding for unwarping
+            'padding': 40  # Padding for unwarping
         }
         
         # Perspective correction parameters (like V3)
@@ -724,10 +725,16 @@ class SingleCameraFisheyeDistortionCorrectionV4:
             except Exception as e:
                 print(f"   {cam_name}: Failed to calculate dot parameters, using defaults: {e}")
                 if dot_size is None:
-                    dot_size = 70  # Default from demo_05.py
+                    dot_size = 425.0  # calculated in past tests (from cropped image)
                 if dot_dist is None:
-                    dot_dist = 162  # Default from demo_05.py
+                    dot_dist = 53.7  # calculated in past tests (from cropped image)
  
+        # Remove non-dot objects - use when binarized image has non dot objects
+        # mat1 = prep.select_dots_based_size(mat1, dot_size, ratio=self.dot_pattern_params[cam_name]['dot_removal_size'])
+        # # Remove non-elliptical objects
+        # mat1 = prep.select_dots_based_ratio(mat1, ratio=self.dot_pattern_params[cam_name]['binarization_ratio'])
+        # if self.save_intermediate:
+        #     losa.save_image(f"{output_dir}/02_binarized_cleaned.jpg", mat1)
 
         # Step 4: Calculate slopes (following the example)
         print(f"      Step 4: Calculate slopes for {cam_name}...")
@@ -735,8 +742,8 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         slope_ver = prep.calc_ver_slope(mat1, ratio=dot_params['slope_ratio'])
         dist_hor = dist_ver = dot_dist
         
-        print(f"      {cam_name}: slope_hor={slope_hor:.4f}, slope_ver={slope_ver:.4f}")
-        print(f"      {cam_name}: dist_hor={dist_hor:.1f}, dist_ver={dist_ver:.1f}")
+        print(f"      {cam_name}: slope_hor={slope_hor:.6f}, slope_ver={slope_ver:.6f}")
+        print(f"      {cam_name}: dist_hor={dist_hor:.4f}, dist_ver={dist_ver:.4f}")
         
         # Step 5: Extract ALL reference points (modified to get all dot pixels)
         print(f"      Step 5: Extract ALL dot points for {cam_name}...")
@@ -839,133 +846,184 @@ class SingleCameraFisheyeDistortionCorrectionV4:
             
             plt.tight_layout()
             plt.savefig(f"{output_dir}/debug_{cam_name}_fisheye_processing.png", dpi=150, bbox_inches='tight')
-            plt.show()
+            plt.close()
         
         # Save intermediate line plots
         if self.save_intermediate:
             losa.save_plot_image(f"{output_dir}/03_horizontal_lines.png", list_hor_lines, height, width)
             losa.save_plot_image(f"{output_dir}/03_vertical_lines.png", list_ver_lines, height, width)
         
-        # Step 9: Find center of distortion using vanishing points (following the example)
+        #calculate residual before correction
+        if self.save_intermediate:
+            list_hor_data = post.calc_residual_hor(list_hor_lines, 0.0, 0.0)
+            list_ver_data = post.calc_residual_ver(list_ver_lines, 0.0, 0.0)
+            losa.save_residual_plot(f"{output_dir}/hor_residual_before_correction.png", list_hor_data, height, width)
+            losa.save_residual_plot(f"{output_dir}/ver_residual_before_correction.png", list_ver_data, height, width)
+
+        #calculate parabola coefficients before correction
+        if self.save_intermediate:
+            (xcen_tmp, ycen_tmp) = proc.find_cod_coarse(list_hor_lines, list_ver_lines)
+
+            list_hor_coef = proc._para_fit_hor(list_hor_lines, xcen_tmp, ycen_tmp)[0]
+            list_ver_coef = proc._para_fit_ver(list_ver_lines, xcen_tmp, ycen_tmp)[0]
+            #plot the results
+            plt.figure(0)
+            plt.plot(list_hor_coef[:, 2], list_hor_coef[:, 0], "-o",label="horizontal")
+            plt.plot(list_ver_coef[:, 2], list_ver_coef[:, 0], "-o", label="vertical")
+            plt.xlabel("c-coefficient")
+            plt.legend()
+            plt.ylabel("a-coefficient")
+            plt.savefig(f"{output_dir}/parabola_coefficients_before_correction_a.png", dpi=150, bbox_inches='tight')
+            plt.close()
+            plt.figure(1)
+            plt.plot(list_hor_coef[:, 2], -list_hor_coef[:, 1], "-o", label="horizontal")
+            plt.plot(list_ver_coef[:, 2], list_ver_coef[:, 1], "-o", label="vertical")
+            plt.xlabel("c-coefficient")
+            plt.ylabel("b-coefficient")
+            plt.legend()
+            plt.savefig(f"{output_dir}/parabola_coefficients_before_correction_b.png", dpi=150, bbox_inches='tight')
+            plt.close()
         
-         # Regenerate grid points with the correction of perspective effect.
-        if self.fisheye_params['enable_perspective_correction']:
-            list_hor_lines1, list_ver_lines1 = proc.regenerate_grid_points_parabola(
-            list_hor_lines, list_ver_lines, perspective=True)
-        else:
-            list_hor_lines1, list_ver_lines1 = list_hor_lines, list_ver_lines
+        #BELOW: OPTIONS FOR USE BEFORE CALCULATING RADIAL DISTORTION COEFFICIENTS (toggle on when needed)
         
-        
-        #find center of distortion
+        # Regenerate grid points with the correction of perspective effect 
+        # if self.fisheye_params['enable_perspective_correction']:
+        #     list_hor_lines1, list_ver_lines1 = proc.regenerate_grid_points_parabola(
+        #     list_hor_lines, list_ver_lines, perspective=True)
+        # else:
+        #     list_hor_lines1, list_ver_lines1 = list_hor_lines, list_ver_lines
+
+        # #correct perspective effect 
+        # if self.fisheye_params['enable_perspective_correction']:
+        #     try: 
+        #         list_hor_lines1, list_ver_lines1 = proc.generate_undistorted_perspective_lines(list_hor_lines, list_ver_lines, equal_dist=True)
+        #         print(f"      {cam_name}: Perspective correction applied")
+        #     except Exception as e:
+        #         print(f"      Warning: Perspective correction failed for {cam_name}, using original lines: {e}")
+        #         list_hor_lines1, list_ver_lines1 = list_hor_lines, list_ver_lines
+        # else: 
+        #     list_hor_lines1, list_ver_lines1 = list_hor_lines, list_ver_lines
+        #     print(f"      {cam_name}: Perspective correction skipped")
+
+        # if self.save_intermediate:
+        #     print(f"      saving perspective corrected lines")
+        #      #check residual of unwarped lines
+        #     list_hor_data = post.calc_residual_hor(list_hor_lines1, 0, 0)
+        #     list_ver_data = post.calc_residual_ver(list_ver_lines1, 0, 0)
+        #     losa.save_residual_plot(f"{output_dir}/hor_residual_after_perspective_correction.png",list_hor_data, height, width)
+        #     losa.save_residual_plot(f"{output_dir}/ver_residual_after_perspective_correction.png", list_ver_data, height, width)
+  
+  
+  # Step 9: Find center of distortion using vanishing points (following the example)
+        #find center of distortion - vanishing points
         print(f"      Step 9: Find center of distortion for {cam_name}...")
         try:
             xcenter, ycenter = proc.find_center_based_vanishing_points_iteration(
-                list_hor_lines1, list_ver_lines1, 
+                list_hor_lines, list_ver_lines, 
                 iteration=self.fisheye_params['vanishing_point_iterations'])
             print(f"      {cam_name}: Center of distortion: X={xcenter:.4f}, Y={ycenter:.4f}")
         except Exception as e:
             print(f"      Warning: Vanishing point method failed for {cam_name}, using coarse method: {e}")
-            xcenter, ycenter = proc.find_cod_coarse(list_hor_lines1, list_ver_lines1)
+            xcenter, ycenter = proc.find_cod_coarse(list_hor_lines, list_ver_lines)
             print(f"      {cam_name}: Center of distortion (coarse): X={xcenter:.4f}, Y={ycenter:.4f}")
-        
-        # Step 10: Correct perspective distortion (following the example)
-        # print(f"      Step 10: Correct perspective effect for {cam_name}...")
-        # if self.fisheye_params['enable_perspective_correction']:
-        #     try:
-        #         corr_hor_lines, corr_ver_lines = proc.correct_perspective_effect(
-        #             list_hor_lines, list_ver_lines, xcenter, ycenter)
-        #         print(f"      {cam_name}: Perspective correction applied")
-               
-        #     except Exception as e:
-        #         print(f"      Warning: Perspective correction failed for {cam_name}, using original lines: {e}")
-        #         corr_hor_lines, corr_ver_lines = list_hor_lines, list_ver_lines
-        # else:
-        #     corr_hor_lines, corr_ver_lines = list_hor_lines, list_ver_lines
-        #     print(f"      {cam_name}: Perspective correction skipped")
-
-        
-        
+    
 
 
-        # Step 11: Calculate polynomial coefficients (following the example)
-        # print(f"      Step 11: Calculate radial distortion coefficients for {cam_name}...")
-        # try:
-        #     list_bfact = proc.calc_coef_backward(corr_hor_lines, corr_ver_lines, 
-        #                                        xcenter, ycenter, self.num_coef)
-        #     print(f"      {cam_name}: Polynomial coefficients: {list_bfact}")
-        # except Exception as e:
-        #     print(f"      Error: Failed to calculate coefficients for {cam_name}: {e}")
-        #     list_bfact = [1.0] + [0.0] * (self.num_coef - 1)
-        #     print(f"      {cam_name}: Using default coefficients: {list_bfact}")
-
-        #step 11.5: calculate coefs, unwarp lines using a forward model
-        if self.fisheye_params['enable_perspective_correction']:
-            list_ffact= proc.calc_coef_forward(list_hor_lines1, list_ver_lines1, 
+        # Step 11: Calculate polynomial coefficients (backwards)
+        print(f"      Step 11: Calculate radial distortion coefficients for {cam_name}...")
+        try:
+            list_bfact = proc.calc_coef_backward(list_hor_lines, list_ver_lines, 
                                                xcenter, ycenter, self.num_coef)
-            print(f"      {cam_name}: Polynomial coefficients: {list_ffact}")
-           
-           
-        else:
+            print(f"      {cam_name}: Polynomial coefficients: {list_bfact}")
+        except Exception as e:
             print(f"      Error: Failed to calculate coefficients for {cam_name}: {e}")
-            list_ffact = [1.0] + [0.0] * (self.num_coef - 1)
-            print(f"      {cam_name}: Using default coefficients: {list_ffact}")
+            list_bfact = [1.0] + [0.0] * (self.num_coef - 1)
+            print(f"      {cam_name}: Using default coefficients: {list_bfact}")
 
-        #calculate unwarped lines using a forward model
-        list_hor_lines2, list_ver_lines2 = proc.regenerate_grid_points_parabola(list_hor_lines, list_ver_lines, perspective=False)
+        #calculate coefs using a forward model
+        # if self.fisheye_params['enable_perspective_correction']:
+        #     print("calculating coefs using a forward model")
+        #     list_ffact= proc.calc_coef_forward(list_hor_lines1, list_ver_lines1, 
+        #                                        xcenter, ycenter, self.num_coef)
+        #     print(f"      {cam_name}: Polynomial coefficients: {list_ffact}")
+        # else:
+        #     print(f"      Error: Failed to calculate coefficients for {cam_name}: {e}")
+        #     list_ffact = [1.0] + [0.0] * (self.num_coef - 1)
+        #     print(f"      {cam_name}: Using default coefficients: {list_ffact}")
 
-        list_uhor_lines = post.unwarp_line_forward(list_hor_lines2, xcenter, ycenter, list_ffact)
-        list_uver_lines = post.unwarp_line_forward(list_ver_lines2, xcenter, ycenter, list_ffact)
+        #calculate unwarped lines (use for forward model)
+        list_hor_lines2, list_ver_lines2 = proc.regenerate_grid_points_parabola(list_hor_lines, list_ver_lines, perspective=False) 
+
+
+        # #calculate unwarped lines using a forward model
+        # list_uhor_lines = post.unwarp_line_forward(list_hor_lines2, xcenter, ycenter, list_ffact)
+        # list_uver_lines = post.unwarp_line_forward(list_ver_lines2, xcenter, ycenter, list_ffact)
         
-        #check residual of unwarped lines
-        list_hor_data = post.calc_residual_hor(list_uhor_lines, xcenter, ycenter)
-        list_ver_data = post.calc_residual_ver(list_uver_lines, xcenter, ycenter)
-        losa.save_residual_plot(f"{output_dir}/hor_residual_after_correction.png",list_hor_data, height, width)
-        losa.save_residual_plot(f"{output_dir}/ver_residual_after_correction.png", list_ver_data, height, width)
+         #get backward coefs from forward
+        # list_bfact = proc.transform_coef_backward_and_forward(list_ffact, mapping='forward')
+       
 
         
         # Calculate unwarped lines (needed for both intermediate saving and perspective coefficients)
-        # print(f"      Step 12: Calculate unwarped lines for {cam_name}...")
-        # try:
-        #     # Test correction on lines
-        #     list_uhor_lines = post.unwarp_line_backward(corr_hor_lines, xcenter, ycenter, list_bfact)
-        #     list_uver_lines = post.unwarp_line_backward(corr_ver_lines, xcenter, ycenter, list_bfact)
-        #     print(f"      {cam_name}: Unwarped lines calculated successfully")
-        # except Exception as e:
-        #     print(f"      Warning: Could not calculate unwarped lines for {cam_name}: {e}")
-        #     list_uhor_lines = corr_hor_lines
-        #     list_uver_lines = corr_ver_lines
+        print(f"      Step 12: Calculate unwarped lines for {cam_name}...")
+        try:
+            # Test correction on lines
+            list_uhor_lines = post.unwarp_line_backward(list_hor_lines, xcenter, ycenter, list_bfact)
+            list_uver_lines = post.unwarp_line_backward(list_ver_lines, xcenter, ycenter, list_bfact)
+            print(f"      {cam_name}: Unwarped lines calculated successfully")
+        except Exception as e:
+            print(f"      Warning: Could not calculate unwarped lines for {cam_name}: {e}")
+            list_uhor_lines = list_hor_lines
+            list_uver_lines = list_ver_lines
 
-        # if self.save_intermediate:   #to check results
-        #             list_hor_coef, _ = proc._para_fit_hor(corr_hor_lines, xcenter, ycenter)
-        #             list_ver_coef, _ = proc._para_fit_ver(corr_ver_lines, xcenter, ycenter)
-        #             plt.plot(list_hor_coef[:, 2], -list_hor_coef[:, 1], "-o", color="red", label="horizontal")
-        #             plt.plot(list_ver_coef[:, 2], list_ver_coef[:, 1], "-o", color="blue", label="vertical")
-        #             plt.legend(loc="upper left")
-        #             plt.xlabel("c-coefficient")
-        #             plt.ylabel("b-coefficient", labelpad=-5)
-        #             plt.savefig(f"{output_dir}/persp_dist_correction.png", dpi=150, bbox_inches='tight')
-        #             plt.close()
         
         # Save intermediate results if enabled
         if self.save_intermediate:
             print(f"      Step 13: Save correction results for {cam_name}...")
+             #check residual of unwarped lines
+            list_hor_data = post.calc_residual_hor(list_uhor_lines, xcenter, ycenter)
+            list_ver_data = post.calc_residual_ver(list_uver_lines, xcenter, ycenter)
+            losa.save_residual_plot(f"{output_dir}/hor_residual_after_correction.png",list_hor_data, height, width)
+            losa.save_residual_plot(f"{output_dir}/ver_residual_after_correction.png", list_ver_data, height, width)
             
+            #plot parabola coefficients
+            list_hor_coef = proc._para_fit_hor(list_uhor_lines, xcenter, ycenter)[0]
+            list_ver_coef = proc._para_fit_ver(list_uver_lines, xcenter, ycenter)[0]
+            plt.figure(0)
+            plt.plot(list_hor_coef[:, 2], list_hor_coef[:, 0], "-o",label="horizontal")
+            plt.plot(list_ver_coef[:, 2], list_ver_coef[:, 0], "-o", label="vertical")
+            plt.xlabel("c-coefficient")
+            plt.legend()
+            plt.ylabel("a-coefficient")
+            plt.savefig(f"{output_dir}/parabola_coefficients_after_correction_a.png", dpi=150, bbox_inches='tight')
+            plt.close()
+            plt.figure(1)
+            plt.plot(list_hor_coef[:, 2], -list_hor_coef[:, 1], "-o", label="horizontal")
+            plt.plot(list_ver_coef[:, 2], list_ver_coef[:, 1], "-o", label="vertical")
+            plt.xlabel("c-coefficient")
+            plt.ylabel("b-coefficient")
+            plt.legend()
+            plt.savefig(f"{output_dir}/parabola_coefficients_after_correction_b.png", dpi=150, bbox_inches='tight')
+            plt.close()
+
             try:
                 # Save corrected line plots
                 losa.save_plot_image(f"{output_dir}/04_unwarpped_horizontal_lines.png", list_uhor_lines, height, width)
                 losa.save_plot_image(f"{output_dir}/04_unwarpped_vertical_lines.png", list_uver_lines, height, width)
                 
-                #get backward coefs from forward
-                list_bfact = proc.transform_coef_backward_and_forward(list_ffact, mapping='forward')
-
                  # Save coefficients
                 losa.save_metadata_txt(f"{output_dir}/coefficients_radial_distortion.txt", xcenter, ycenter, list_bfact)
                 losa.save_metadata_json(f"{output_dir}/distortion_parameters.json", xcenter, ycenter, list_bfact)
                 
-                # Apply correction to the image (following the example)
+                # Apply correction to the image (following the example) (backwards)
                 img_corr = util.unwarp_color_image_backward(image, xcenter, ycenter, list_bfact, 
                                                           pad=self.fisheye_params['padding'])
-                losa.save_image(f"{output_dir}/05_corrected_image.jpg", img_corr)
+                print(f"image unwarping applied.Variables used: xcenter: {xcenter}, ycenter: {ycenter}, list_bfact/coeffs: {list_bfact}")
+                losa.save_image(f"{output_dir}/05_corrected_image_backward.jpg", img_corr)
+                
+                # #unwarp image (forward)
+                # img_corr = post.unwarp_image_forward(image,xcenter,ycenter,list_ffact) 
+                # losa.save_image(f"{output_dir}/05_corrected_image_forward.jpg", img_corr)
                 
                 print(f"      {cam_name}: Correction results saved")
                 
@@ -986,9 +1044,10 @@ class SingleCameraFisheyeDistortionCorrectionV4:
                     equal_dist=self.perspective_params['equal_dist'],
                     scale=self.perspective_params['scale'],
                     optimizing=self.perspective_params['optimizing'])
+
                 
                 # Calculate perspective coefficients
-                pers_coef = proc.calc_perspective_coefficients(source_points, target_points, mapping="backward")
+                pers_coef = proc.calc_perspective_coefficients(source_points, target_points, mapping="backward")  #change based on mapping type
                 
                 # Save perspective coefficients
                 np.savetxt(f"{output_dir}/perspective_coefficients.txt", pers_coef.reshape(-1, 1))
@@ -1003,7 +1062,8 @@ class SingleCameraFisheyeDistortionCorrectionV4:
                         pers_diff = image_pers_corr.astype(np.float32) - img_corr.astype(np.float32)
                         pers_diff = np.clip(pers_diff + 128, 0, 255).astype(np.uint8)
                         losa.save_image(f"{output_dir}/06_difference_perspective.jpg", pers_diff)
-                        
+            
+                       
                         print(f"      {cam_name}: Perspective correction applied and saved")
                     except Exception as e:
                         print(f"      Warning: Could not save perspective corrected image for {cam_name}: {e}")
