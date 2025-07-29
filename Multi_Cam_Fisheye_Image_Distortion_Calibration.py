@@ -88,7 +88,7 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         
         # Results storage
         self.results = {
-            'xcenter': None, 'ycenter': None, 'coeffs': None, 'pers_coef': None
+            'xcenter': None, 'ycenter': None, 'coeffs': None, 'pers_coef': None, 'rotation_angle': None	
         }
         
     
@@ -581,8 +581,8 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         if self.save_intermediate:
             list_hor_data = post.calc_residual_hor(list_hor_lines, 0.0, 0.0)
             list_ver_data = post.calc_residual_ver(list_ver_lines, 0.0, 0.0)
-            losa.save_residual_plot(f"{intermediate_dir}/07_hor_residual_before_correction.png", list_hor_data, height, width)
-            losa.save_residual_plot(f"{intermediate_dir}/08_ver_residual_before_correction.png", list_ver_data, height, width)
+            losa.save_residual_plot(f"{intermediate_dir}/07.1_hor_residual_before_correction.png", list_hor_data, height, width)
+            losa.save_residual_plot(f"{intermediate_dir}/08.1_ver_residual_before_correction.png", list_ver_data, height, width)
 
         
         #BELOW: OPTION FOR USE BEFORE CALCULATING RADIAL DISTORTION COEFFICIENTS (toggle on when needed)
@@ -636,15 +636,17 @@ class SingleCameraFisheyeDistortionCorrectionV4:
             list_uhor_lines = list_hor_lines
             list_uver_lines = list_ver_lines
 
-        
+        img_corr = util.unwarp_color_image_backward(image, xcenter, ycenter, list_bfact, 
+                                                          pad=self.fisheye_params['padding'])
+
         # Save intermediate results if enabled
         if self.save_intermediate:
             print(f"      Step 13: Save correction results for {cam_name}...")
              #check residual of unwarped lines
             list_hor_data = post.calc_residual_hor(list_uhor_lines, xcenter, ycenter)
             list_ver_data = post.calc_residual_ver(list_uver_lines, xcenter, ycenter)
-            losa.save_residual_plot(f"{intermediate_dir}/07_hor_residual_after_correction.png",list_hor_data, height, width)
-            losa.save_residual_plot(f"{intermediate_dir}/08_ver_residual_after_correction.png", list_ver_data, height, width)
+            losa.save_residual_plot(f"{intermediate_dir}/07.2_hor_residual_after_correction.png",list_hor_data, height, width)
+            losa.save_residual_plot(f"{intermediate_dir}/08.2_ver_residual_after_correction.png", list_ver_data, height, width)
             
 
             try:
@@ -654,8 +656,7 @@ class SingleCameraFisheyeDistortionCorrectionV4:
                 
                 
                 # Apply correction to the image (following the example) (backwards)
-                img_corr = util.unwarp_color_image_backward(image, xcenter, ycenter, list_bfact, 
-                                                          pad=self.fisheye_params['padding'])
+                
                 print(f"image unwarping applied.Variables used: xcenter: {xcenter}, ycenter: {ycenter}, list_bfact/coeffs: {list_bfact}")
                 losa.save_image(f"{intermediate_dir}/05_corrected_image_backward.jpg", img_corr)
                 
@@ -684,11 +685,11 @@ class SingleCameraFisheyeDistortionCorrectionV4:
                 pers_coef = proc.calc_perspective_coefficients(source_points, target_points, mapping="backward")  #change based on mapping type
                 
                 # Apply perspective correction to the radially corrected image (if available)
+                image_pers_corr = post.correct_perspective_image(img_corr, pers_coef)
+                
                 if self.save_intermediate and img_corr is not None:
                     try:
-                        image_pers_corr = post.correct_perspective_image(img_corr, pers_coef)
                         losa.save_image(f"{intermediate_dir}/06_corrected_image_radial_perspective.jpg", image_pers_corr)
-                        
                         print(f"      {cam_name}: Perspective correction applied and saved")
                     except Exception as e:
                         print(f"      Warning: Could not save perspective corrected image for {cam_name}: {e}")
@@ -704,10 +705,42 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         
         # Store perspective coefficients in results
         self.results['pers_coef'] = pers_coef
-        
-                
 
-        return xcenter, ycenter, list_bfact
+        #recalculate final corrected lines, for residual checking and rotation angle calculation
+        list_hor_lines3, list_ver_lines3 = proc.regenerate_grid_points_parabola(list_uhor_lines, list_uver_lines, perspective=True)
+        if self.save_perspective_coefficients:
+            corr_binary = prep.binarization(image_pers_corr, self.dot_pattern_params['binarization_ratio'], denoise=True)
+        else:
+            corr_binary = prep.binarization(img_corr, self.dot_pattern_params['binarization_ratio'], denoise=True)
+        
+        hor_slope = prep.calc_hor_slope(corr_binary)
+        ver_slope = prep.calc_ver_slope(corr_binary)
+        
+        #calculate rotation angle
+        rotation_angle_hor = np.arctan2(hor_slope, 1)
+        print(f"      {cam_name}: Rotation angle (rad) hor: {rotation_angle_hor}")
+        rotation_angle_ver = np.arctan2(ver_slope, 1)
+        print(f"      {cam_name}: Rotation angle (rad) ver: {rotation_angle_ver}")
+        rotation_angle = np.mean([rotation_angle_hor, rotation_angle_ver])
+        rotation_angle = np.degrees(rotation_angle)
+        #swap signs of rotation angle so that it can correct the image
+        rotation_angle = -rotation_angle
+        print(f"      {cam_name}: Rotation angle: {rotation_angle} degrees")
+        
+        #save rotation angle
+        self.results['rotation_angle'] = rotation_angle
+        
+        if self.save_intermediate:
+            print(f"      Step 13: Save correction results for {cam_name}...")
+             #check residual of unwarped lines
+            list_hor_data = post.calc_residual_hor(list_hor_lines3, xcenter, ycenter)
+            list_ver_data = post.calc_residual_ver(list_ver_lines3, xcenter, ycenter)
+            losa.save_residual_plot(f"{intermediate_dir}/07.3_hor_residual_final.png",list_hor_data, height, width)
+            losa.save_residual_plot(f"{intermediate_dir}/08.3_ver_residual_final.png", list_ver_data, height, width)
+            
+
+        
+        return xcenter, ycenter, list_bfact, rotation_angle
 
     def process_single_camera(self, image, output_dir, cam_name):
         """Process single camera using proper fisheye dot pattern workflow"""
@@ -717,24 +750,23 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         os.makedirs(output_dir, exist_ok=True)
         
         # Save input image
-        self.save_jpeg_from_array(image, f"{output_dir}/{cam_name}_00_input.jpg")
+        # self.save_jpeg_from_array(image, f"{output_dir}/{cam_name}_00_input.jpg")
         
         # Process camera using the proper fisheye dot pattern workflow
-        xcenter, ycenter, coeffs = self.process_fisheye_dot_pattern(image, cam_name, output_dir)
+        xcenter, ycenter, coeffs, rotation_angle = self.process_fisheye_dot_pattern(image, cam_name, output_dir)
         
         results = {
-            cam_name: {
-                'xcenter': float(xcenter),
-                'ycenter': float(ycenter),
-                'coeffs': [float(c) for c in coeffs],
-                'pers_coef': [float(c) for c in self.results['pers_coef']] if self.results['pers_coef'] is not None else None,
-            }
+            'xcenter': float(xcenter),
+            'ycenter': float(ycenter),
+            'coeffs': [float(c) for c in coeffs],
+            'pers_coef': [float(c) for c in self.results['pers_coef']] if self.results['pers_coef'] is not None else None,
+            'rotation_angle': float(self.results['rotation_angle']) if self.results['rotation_angle'] is not None else None,
         }
         
         self.results['xcenter'] = xcenter
         self.results['ycenter'] = ycenter
         self.results['coeffs'] = coeffs
-        
+        self.results['rotation_angle'] = rotation_angle
         return results
 
     def process_multi_camera_file(self, folder_path, output_base):

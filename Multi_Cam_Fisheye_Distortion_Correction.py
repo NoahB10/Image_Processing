@@ -54,76 +54,9 @@ class DualImagePostProcessor:
             'cam1': {'width': 2050, 'start_x': 1400, 'height': 2592}   # Right camera
         }
 
+        self.current_filename = 'cam'
         # Default distortion correction parameters (including perspective coefficients)
-        self.distortion_params = {
-           
-        "cam2": {
-            "xcenter": 675.9054553367017,
-            "ycenter": 979.5718633867541,
-            "coeffs": [
-                1.0063623325635476,
-                -6.322467726869992e-05,
-                2.3944969699847397e-07,
-                -3.069765435956987e-10,
-                1.3221712678694597e-13
-            ],
-            "pers_coef": [
-                1.016310273446527,
-                0.009508318097414037,
-                -9.891928051238953,
-                0.008065167171187996,
-                1.023575364396132,
-                -8.52783737756779,
-                4.881684316011825e-06,
-                1.6960599085685465e-05
-            ]
-            
-        },
-        "cam3": {
-            "xcenter": 692.9171601001485,
-            "ycenter": 776.2105859974246,
-            "coeffs": [
-                0.997617188562995,
-                1.733463284765076e-05,
-                -5.5831934873259515e-08,
-                8.150722780257147e-11,
-                -4.139949423857467e-14
-            ],
-            "pers_coef": [
-                1.003575379583807,
-                0.00262510337554107,
-                -4.76741949282586,
-                0.002659201290660303,
-                1.0153120874958248,
-                -8.116753751624794,
-                -2.584238984047315e-06,
-                8.832134738726537e-06
-            ]
-            
-        },
-        "cam4": {
-            "xcenter": 878.5710332643449,
-            "ycenter": 541.7895005389422,
-            "coeffs": [
-                0.9944294176792541,
-                6.128545971114466e-05,
-                -1.658456071710951e-07,
-                1.6238794301373063e-10,
-                -5.2793923746574656e-14
-            ],
-            "pers_coef": [
-                0.9929174998230154,
-                -0.0013624388491731629,
-                0.41920945359527173,
-                -0.0021493476439944027,
-                1.007045893704902,
-                -0.46238361645404413,
-                -8.745105029435343e-06,
-                6.334851211151028e-06
-            ]
-            }
-        }
-        self.rotation_angle = {}
+        self.distortion_params = {}
 
         # Processing options
         self.apply_cropping = False
@@ -143,20 +76,31 @@ class DualImagePostProcessor:
         coeff_file = 'distortion_coefficients.json'
         if os.path.exists(coeff_file):
             try:
-                with open(coeff_file, 'r') as f:
-                    saved_params = json.load(f)
+                try: 
+                    with open(coeff_file, 'r') as f:
+                        saved_params = json.load(f)
+                except json.JSONDecodeError as e:
+                    print("JSON decode error:", e)
+                except FileNotFoundError:
+                    print("File not found:", coeff_file)
+                    return
+                    
                     
                 # Update distortion parameters with loaded data
-                for cam in saved_params:
-                    if cam not in self.distortion_params:
-                        self.distortion_params[cam] = {'xcenter': None, 'ycenter': None, 'coeffs': None, 'pers_coef': None, 'rotation_angle': None}
-                        
-                    # Update all available parameters
-                    for key in ['xcenter', 'ycenter', 'coeffs', 'pers_coef', 'rotation_angle']:
-                        if key in saved_params[cam]:
+                keys = ['xcenter', 'ycenter', 'coeffs', 'pers_coef', 'rotation_angle']
+                for cam in ['cam0', 'cam1', 'cam2', 'cam3', 'cam4', 'cam5', 'cam6', 'cam7']:
+                    if cam in saved_params:
+                        if cam not in self.distortion_params:
+                            self.distortion_params[cam] = {key: None for key in keys}
+                    for key in keys:
+                        if key in saved_params[cam]:    
                             self.distortion_params[cam][key] = saved_params[cam][key]
+                        else:
+                            self.distortion_params[cam][key] = None
+
                 
-                print("[SUCCESS] Loaded distortion coefficients from saved file")
+                print("[INFO] Distortion parameters now in use for processing:")
+                print(json.dumps(self.distortion_params, indent=2))
             except Exception as e:
                 print(f"[WARNING] Failed to load saved coefficients: {e}")
                 print("[INFO] Using default distortion coefficients")
@@ -322,7 +266,8 @@ class DualImagePostProcessor:
 
     def rotate_image(self, image, cam_name):
         """Rotate the image by the specified angle"""
-        if not self.apply_rotation or rotation_angle not in self.distortion_params[cam_name]:
+        if not self.apply_rotation or self.distortion_params[cam_name]['rotation_angle'] is None:
+            print(f"[INFO] No rotation angle available for {cam_name}, skipping")
             return image
             
         rotation_angle = self.distortion_params[cam_name]['rotation_angle']
@@ -349,17 +294,39 @@ class DualImagePostProcessor:
             print(f"[ERROR] image rotation failed: {e}")
             return image
 
-    def save_processed_image(self, image, output_path, format_type=None):
+    def save_processed_image(self, image, output_path, cam_name, format_type=None):
         """Save processed image in specified format with improved TIFF handling"""
         if format_type is None:
             format_type = self.output_format
+
+        if "cropped" or "corrected" or "perspective" or "rotated" or "processed" not in output_path:
+            base_name = cam_name
+            suffixes = []
+            if self.apply_cropping:
+                suffixes.append("cropped")
+            if self.enable_distortion_correction:
+                suffixes.append("corrected")
+            if self.enable_perspective_correction:
+                suffixes.append("perspective")
+            if self.apply_rotation:
+                suffixes.append("rotated")
             
+            suffix_str = "_" + "_".join(suffixes) if suffixes else "_processed"
+            ext_map = {'JPEG': '.jpg', 'TIFF': '.tiff', 'PNG': '.png'}
+            ext = ext_map.get(self.output_format.upper(), '.jpg')
+            
+            filename= f"{base_name}{suffix_str}{ext}"
+            output_path = os.path.join(output_path, filename)
+
         try:
             # Ensure we have a valid image
             if image is None or image.size == 0:
                 print(f"[ERROR] Invalid image data for {output_path}")
                 return False
+           
+        
             
+
             print(f"[DEBUG] Saving image: {output_path}")
             print(f"[DEBUG] Original image shape: {image.shape}, dtype: {image.dtype}, range: [{image.min()}, {image.max()}]")
             
@@ -631,11 +598,18 @@ class DualImagePostProcessor:
         self.output_format = self.format_var.get()
         self.jpeg_quality = self.quality_var.get()
         
-        # Select input folder
+        # Select input folder, read camera names from folder
         input_folder = filedialog.askdirectory(
-            title="Select folder containing images to process",
+            title="Select folder containing PNG images to process",
         )
-        
+        png_files = [f for f in os.listdir(input_folder) if f.endswith('.png')]
+        cam_name_to_path = {}
+        for png_file in png_files:
+            png_path = os.path.join(input_folder, png_file)
+            basename = os.path.basename(png_file).lower()
+            if 'cam' in basename:
+                cam_name = re.search(r'cam(\d+)', basename).group()
+                cam_name_to_path[cam_name] = png_path
         if not input_folder:
             return
         
@@ -648,38 +622,29 @@ class DualImagePostProcessor:
             return
         
         # Select output file
-        base_name = os.path.splitext(os.path.basename(output_folder))[0]
-        suffixes = []
-        if self.apply_cropping:
-            suffixes.append("cropped")
-        if self.enable_distortion_correction:
-            suffixes.append("corrected")
-        if self.enable_perspective_correction:
-            suffixes.append("perspective")
-        if self.apply_rotation:
-            suffixes.append("rotated")
         
-        suffix_str = "_" + "_".join(suffixes) if suffixes else "_processed"
-        ext_map = {'JPEG': '.jpg', 'TIFF': '.tiff', 'PNG': '.png'}
-        ext = ext_map.get(self.output_format.upper(), '.jpg')
+        # base_name = cam_name
+        # suffixes = []
+        # if self.apply_cropping:
+        #     suffixes.append("cropped")
+        # if self.enable_distortion_correction:
+        #     suffixes.append("corrected")
+        # if self.enable_perspective_correction:
+        #     suffixes.append("perspective")
+        # if self.apply_rotation:
+        #     suffixes.append("rotated")
         
-        default_output = f"{base_name}{suffix_str}{ext}"
+        # suffix_str = "_" + "_".join(suffixes) if suffixes else "_processed"
+        # ext_map = {'JPEG': '.jpg', 'TIFF': '.tiff', 'PNG': '.png'}
+        # ext = ext_map.get(self.output_format.upper(), '.jpg')
         
-        output_file = filedialog.asksaveasfilename(
-            title="Save processed image as",
-            defaultextension=ext,
-            initialfile=default_output,
-            filetypes=[(f"{self.output_format} files", f"*{ext}"), ("All files", "*.*")]
-        )
-        
-        if not output_file:
-            return
+        # self.current_filename = f"{base_name}{suffix_str}{ext}"
         
         # Process the folder
-        success = self.process_multiple_images(input_folder, output_file)
+        success = self.process_multiple_images(input_folder, output_folder)
         
         if success:
-            messagebox.showinfo("Success", f"Image processed successfully!\nSaved as: {os.path.basename(output_file)}")
+            messagebox.showinfo("Success", f"Image processed successfully!\nSaved to: {os.path.basename(output_folder)}")
         else:
             messagebox.showerror("Error", "Failed to process image. Check console for details.")
 
@@ -711,11 +676,12 @@ class DualImagePostProcessor:
         if self.apply_rotation:
             processed_image = self.rotate_image(processed_image, cam_name)
         
+
         # Save the processed image
-        success = self.save_processed_image(processed_image, output_path)
+        success = self.save_processed_image(processed_image, output_path, cam_name)
         
         if success:
-            print(f"[SUCCESS] Completed processing: {os.path.basename(output_path)}")
+            print(f"[SUCCESS] Completed processing: {cam_name} is saved to the folder {os.path.basename(output_path)} ")
             print(f"   Original: {image.shape} -> Processed: {processed_image.shape}")
         
         return success
@@ -725,6 +691,7 @@ class DualImagePostProcessor:
         
         #get all png files in folder
         png_files = [f for f in os.listdir(folder_path) if f.endswith('.png')]
+        print(f"Found {len(png_files)} PNG files in folder. Processing...")
 
         cam_name_to_path = {}
         for png_file in png_files:
@@ -773,15 +740,13 @@ class DualImagePostProcessor:
                 loaded_params = json.load(f)
             
             # Update distortion parameters with loaded data
-            for cam in loaded_params:
-                if cam not in self.distortion_params:
-                    self.distortion_params[cam] = {'xcenter': None, 'ycenter': None, 'coeffs': None, 'pers_coef': None, 'rotation_angle': None}
-                
-                # Update all available parameters
-                for key in ['xcenter', 'ycenter', 'coeffs', 'pers_coef', 'rotation_angle']:
-                    if key in loaded_params[cam]:
-                        self.distortion_params[cam][key] = loaded_params[cam][key]
-                        print(f"[INFO] Loaded {key} for {cam}: {loaded_params[cam][key]}")
+            keys = ['xcenter', 'ycenter', 'coeffs', 'pers_coef', 'rotation_angle']
+            for cam in ['cam0', 'cam1', 'cam2', 'cam3', 'cam4', 'cam5', 'cam6', 'cam7']:
+                for cam in loaded_params:
+                    if cam not in self.distortion_params:
+                        self.distortion_params[cam] = {key: None for key in keys}
+                    for key in keys:
+                        self.distortion_params[cam][key] = loaded_params[cam].get(key, None)
             
                 # Update cropping parameters if available in the file
                 if 'crop_params' in loaded_params:
@@ -824,10 +789,7 @@ class DualImagePostProcessor:
                 success_msg += "\n\nPerspective correction coefficients loaded and available for use."
             
             messagebox.showinfo("Success", success_msg)
-            print("[INFO] Distortion parameters now in use for processing:")
-            print(json.dumps(self.distortion_params, indent=2))
             self.sync_gui_with_params()
-            return True  # Indicate success
             
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load parameters from file:\n{str(e)}")
