@@ -299,7 +299,12 @@ class DualImagePostProcessor:
         if format_type is None:
             format_type = self.output_format
 
-        if "cropped" or "corrected" or "perspective" or "rotated" or "processed" not in output_path:
+        # Check if output_path is a directory (no file extension) or if the filename doesn't contain processing keywords
+        output_basename = os.path.basename(output_path)
+        has_extension = '.' in output_basename
+        has_processing_keywords = any(keyword in output_basename for keyword in ["cropped", "corrected", "perspective", "rotated", "processed"])
+        
+        if not has_extension or not has_processing_keywords:
             base_name = cam_name
             suffixes = []
             if self.apply_cropping:
@@ -319,6 +324,12 @@ class DualImagePostProcessor:
             output_path = os.path.join(output_path, filename)
 
         try:
+            # Ensure output directory exists
+            output_dir = os.path.dirname(output_path)
+            if output_dir and not os.path.exists(output_dir):
+                os.makedirs(output_dir, exist_ok=True)
+                print(f"[INFO] Created output directory: {output_dir}")
+            
             # Ensure we have a valid image
             if image is None or image.size == 0:
                 print(f"[ERROR] Invalid image data for {output_path}")
@@ -708,7 +719,7 @@ class DualImagePostProcessor:
             print(f"Processing {cam_name} image: {os.path.basename(png_path)}")
             self.process_single_image(png_path, output_path, cam_name)
         
-        print(f'all {len(cam_name_to_path)} images processed')
+        print(f'ALL {len(cam_name_to_path)} IMAGES PROCESSED')
         return True
         
 

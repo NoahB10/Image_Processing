@@ -24,8 +24,8 @@ import re
 class SingleCameraFisheyeDistortionCorrectionV4:
     def __init__(self):
         # Processing parameters for PROPER FISHEYE DOT PATTERN analysis
-        self.num_coef = 5  # Number of polynomial coefficients for fisheye
-        self.sigma_normalization = 30  # FFT normalization (10 like the example)
+        self.num_coef = 3  # Number of polynomial coefficients for fisheye
+        self.sigma_normalization = 10  # FFT normalization (10 like the example)
 
         # Dot pattern parameters (following Discorpy_Fisheye_Example.py)
         self.dot_pattern_params = {
@@ -62,7 +62,7 @@ class SingleCameraFisheyeDistortionCorrectionV4:
                 'num_dot_miss': 4,          # Number of missing dots allowed
                 'accepted_ratio': 0.65,     # Acceptance ratio for grouping
                 'order': 2,                 # Polynomial order for polyfit
-                'residual_threshold': 20.0   # Residual threshold (from example)
+                'residual_threshold': 3.0   # Residual threshold (from example)
         }
         
         # Fisheye-specific parameters (following the example)
@@ -707,7 +707,7 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         self.results['pers_coef'] = pers_coef
 
         #recalculate final corrected lines, for residual checking and rotation angle calculation
-        list_hor_lines3, list_ver_lines3 = proc.regenerate_grid_points_parabola(list_uhor_lines, list_uver_lines, perspective=True)
+        list_hor_lines3, list_ver_lines3 = proc.regenerate_grid_points_parabola(list_uhor_lines, list_uver_lines, perspective=True) #for checking residual
         if self.save_perspective_coefficients:
             corr_binary = prep.binarization(image_pers_corr, self.dot_pattern_params['binarization_ratio'], denoise=True)
         else:
@@ -717,9 +717,9 @@ class SingleCameraFisheyeDistortionCorrectionV4:
         ver_slope = prep.calc_ver_slope(corr_binary)
         
         #calculate rotation angle
-        rotation_angle_hor = np.arctan2(hor_slope, 1)
+        rotation_angle_hor = np.arctan(hor_slope)
         print(f"      {cam_name}: Rotation angle (rad) hor: {rotation_angle_hor}")
-        rotation_angle_ver = np.arctan2(ver_slope, 1)
+        rotation_angle_ver = np.arctan(ver_slope)
         print(f"      {cam_name}: Rotation angle (rad) ver: {rotation_angle_ver}")
         rotation_angle = np.mean([rotation_angle_hor, rotation_angle_ver])
         rotation_angle = np.degrees(rotation_angle)
@@ -807,17 +807,17 @@ class SingleCameraFisheyeDistortionCorrectionV4:
                 all_camera_results[cam_name] = results
             
                 # Save summary
-                if self.save_intermediate:
-                    with open(f"{output_base}/{cam_name}_summary.txt", 'w') as f:
-                        f.write("=== Single Camera Fisheye Distortion Correction Results (Proper Dot Pattern Workflow) ===\n\n")
-                        f.write(f"Camera ({cam_name}):\n")
-                        f.write(f"  Center: ({results[cam_name]['xcenter']:.4f}, {results[cam_name]['ycenter']:.4f})\n")
-                        f.write(f"  Radial Coefficients: {results[cam_name]['coeffs']}\n")
-                        if results[cam_name]['pers_coef'] is not None:
-                            f.write(f"  Perspective Coefficients: {results[cam_name]['pers_coef']}\n")
-                        else:
-                            f.write(f"  Perspective Coefficients: Not calculated\n")
-                        f.write(f"  Image size: {gray.shape}\n\n")
+                # if self.save_intermediate:
+                #     with open(f"{output_base}/{cam_name}_summary.txt", 'w') as f:
+                #         f.write("=== Single Camera Fisheye Distortion Correction Results (Proper Dot Pattern Workflow) ===\n\n")
+                #         f.write(f"Camera ({cam_name}):\n")
+                #         f.write(f"  Center: ({results[cam_name]['xcenter']:.4f}, {results[cam_name]['ycenter']:.4f})\n")
+                #         f.write(f"  Radial Coefficients: {results[cam_name]['coeffs']}\n")
+                #         if results[cam_name]['pers_coef'] is not None:
+                #             f.write(f"  Perspective Coefficients: {results[cam_name]['pers_coef']}\n")
+                #         else:
+                #             f.write(f"  Perspective Coefficients: Not calculated\n")
+                #         f.write(f"  Image size: {gray.shape}\n\n")
                   
                 print(f"\n=== {cam_name} PROCESSING COMPLETE ===")
                 print(f"Camera ({cam_name}):  Center: ({results[cam_name]['xcenter']:.4f}, {results[cam_name]['ycenter']:.4f})")
