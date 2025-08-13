@@ -32,7 +32,7 @@ class SingleCameraFisheyeDistortionCorrectionV4:
                 'binarization_ratio': 0.8,  # Ratio for binarization
                 'size_distance_ratio': 0.8,  # Ratio for size/distance calculation
                 'slope_ratio': 0.3,           # Ratio for slope calculation
-                'dot_removal_size': 0.8,       # acceptable range: dot_size - ratio*dot_size; dot_size + ratio*dot_size
+                'dot_removal_size': 0.5,       # acceptable range: dot_size - ratio*dot_size; dot_size + ratio*dot_size
                 'elipse_ratio': 0.7,          # ratio between axes of fitted elipse smaller than threshold      
 
         }
@@ -58,16 +58,16 @@ class SingleCameraFisheyeDistortionCorrectionV4:
 
         # Grouping parameters (following Discorpy_Fisheye_Example.py exactly)
         self.grouping_params = {
-                'ratio': 0.4,               # Grouping tolerance ratio (from example)
-                'num_dot_miss': 4,          # Number of missing dots allowed
-                'accepted_ratio': 0.65,     # Acceptance ratio for grouping
+                'ratio': 0.2,               # Grouping tolerance ratio (from example)
+                'num_dot_miss': 3,          # Number of missing dots allowed
+                'accepted_ratio': 0.8,     # Acceptance ratio for grouping
                 'order': 2,                 # Polynomial order for polyfit
                 'residual_threshold': 3.0   # Residual threshold (from example)
         }
         
         # Fisheye-specific parameters (following the example)
         self.fisheye_params = {
-            'vanishing_point_iterations': 5,  # Iterations for center finding
+            'vanishing_point_iterations': 10,  # Iterations for center finding
             'enable_perspective_correction': True,  # Apply perspective correction
             'padding': 40  # Padding for unwarping
         }
@@ -585,7 +585,7 @@ class SingleCameraFisheyeDistortionCorrectionV4:
             losa.save_residual_plot(f"{intermediate_dir}/08.1_ver_residual_before_correction.png", list_ver_data, height, width)
 
         
-        #BELOW: OPTION FOR USE BEFORE CALCULATING RADIAL DISTORTION COEFFICIENTS (toggle on when needed)
+        
         
         # Regenerate grid points with the correction of perspective effect 
         if self.fisheye_params['enable_perspective_correction']:
@@ -636,9 +636,7 @@ class SingleCameraFisheyeDistortionCorrectionV4:
             list_uhor_lines = list_hor_lines
             list_uver_lines = list_ver_lines
 
-        img_corr = util.unwarp_color_image_backward(image, xcenter, ycenter, list_bfact, 
-                                                          pad=self.fisheye_params['padding'])
-
+        
         # Save intermediate results if enabled
         if self.save_intermediate:
             print(f"      Step 13: Save correction results for {cam_name}...")
@@ -656,7 +654,8 @@ class SingleCameraFisheyeDistortionCorrectionV4:
                 
                 
                 # Apply correction to the image (following the example) (backwards)
-                
+                img_corr = util.unwarp_color_image_backward(image, xcenter, ycenter, list_bfact, 
+                                                          pad=self.fisheye_params['padding'])
                 print(f"image unwarping applied.Variables used: xcenter: {xcenter}, ycenter: {ycenter}, list_bfact/coeffs: {list_bfact}")
                 losa.save_image(f"{intermediate_dir}/05_corrected_image_backward.jpg", img_corr)
                 
@@ -684,11 +683,10 @@ class SingleCameraFisheyeDistortionCorrectionV4:
                 # Calculate perspective coefficients
                 pers_coef = proc.calc_perspective_coefficients(source_points, target_points, mapping="backward")  #change based on mapping type
                 
-                # Apply perspective correction to the radially corrected image (if available)
-                image_pers_corr = post.correct_perspective_image(img_corr, pers_coef)
-                
                 if self.save_intermediate and img_corr is not None:
                     try:
+                        # Apply perspective correction to the radially corrected image (if available)
+                        image_pers_corr = post.correct_perspective_image(img_corr, pers_coef)
                         losa.save_image(f"{intermediate_dir}/06_corrected_image_radial_perspective.jpg", image_pers_corr)
                         print(f"      {cam_name}: Perspective correction applied and saved")
                     except Exception as e:
@@ -708,27 +706,54 @@ class SingleCameraFisheyeDistortionCorrectionV4:
 
         #recalculate final corrected lines, for residual checking and rotation angle calculation
         list_hor_lines3, list_ver_lines3 = proc.regenerate_grid_points_parabola(list_uhor_lines, list_uver_lines, perspective=True) #for checking residual
-        if self.save_perspective_coefficients:
-            corr_binary = prep.binarization(image_pers_corr, self.dot_pattern_params['binarization_ratio'], denoise=True)
-        else:
-            corr_binary = prep.binarization(img_corr, self.dot_pattern_params['binarization_ratio'], denoise=True)
         
-        hor_slope = prep.calc_hor_slope(corr_binary)
-        ver_slope = prep.calc_ver_slope(corr_binary)
+        #testing manually calculating the slope
+        hor_slopes = []
+        ver_slopes = []
+        for line in list_hor_lines3:
+            # Extract x and y coordinates
+            x_vals = [pt[1] for pt in line]
+            y_vals = [pt[0] for pt in line]
+
+            # Fit a line: y = m*x + b → slope = m
+            if len(set(x_vals)) > 1:  # Avoid vertical lines where x is constant
+                m, _ = np.polyfit(x_vals, y_vals, 1)
+                hor_slopes.append(m)
+        hor_slope_manual = np.median(hor_slopes)
+        print(f"      {cam_name}: Manual Slope hor: {hor_slope_manual}")
+
+        for line in list_ver_lines3:
+            # Extract x and y coordinates
+            x_vals = [pt[1] for pt in line]
+            y_vals = [pt[0] for pt in line]
+
+            # Fit a line: y = m*x + b → slope = m
+            if len(set(x_vals)) > 1:  # Avoid vertical lines where x is constant
+                m, _ = np.polyfit(x_vals, y_vals, 1)
+                ver_slopes.append(m)
+        ver_slope_manual = np.median(ver_slopes)
+        print(f"      {cam_name}: Manual Slope ver: {ver_slope_manual}")
+
+        #calculate angles from slopes
+        rotation_angle_hor = np.arctan(hor_slope_manual)
+        print(f"      {cam_name}:  Rotation angle (rad) hor: {rotation_angle_hor}")
         
-        #calculate rotation angle
-        rotation_angle_hor = np.arctan(hor_slope)
-        print(f"      {cam_name}: Rotation angle (rad) hor: {rotation_angle_hor}")
-        rotation_angle_ver = np.arctan(ver_slope)
+        rotation_angle_ver = np.arctan(ver_slope_manual)
         print(f"      {cam_name}: Rotation angle (rad) ver: {rotation_angle_ver}")
+        if rotation_angle_ver > 0:
+            rotation_angle_ver =  rotation_angle_ver - (np.pi)/2  
+        else:
+            rotation_angle_ver = (np.pi)/2 + rotation_angle_ver
+        print(f"      {cam_name}: adjusted Rotation angle (rad) ver: {rotation_angle_ver}")
+        
+
         rotation_angle = np.mean([rotation_angle_hor, rotation_angle_ver])
-        rotation_angle = np.degrees(rotation_angle)
-        #swap signs of rotation angle so that it can correct the image
-        rotation_angle = -rotation_angle
-        print(f"      {cam_name}: Rotation angle: {rotation_angle} degrees")
+        rotation_angle = np.degrees(rotation_angle) 
+        print(f"      {cam_name}: Rotation angle: {rotation_angle} degrees") #this is the angle needed to correct image - positive is counterclockwise
         
         #save rotation angle
         self.results['rotation_angle'] = rotation_angle
+
         
         if self.save_intermediate:
             print(f"      Step 13: Save correction results for {cam_name}...")
@@ -806,23 +831,11 @@ class SingleCameraFisheyeDistortionCorrectionV4:
                 
                 all_camera_results[cam_name] = results
             
-                # Save summary
-                # if self.save_intermediate:
-                #     with open(f"{output_base}/{cam_name}_summary.txt", 'w') as f:
-                #         f.write("=== Single Camera Fisheye Distortion Correction Results (Proper Dot Pattern Workflow) ===\n\n")
-                #         f.write(f"Camera ({cam_name}):\n")
-                #         f.write(f"  Center: ({results[cam_name]['xcenter']:.4f}, {results[cam_name]['ycenter']:.4f})\n")
-                #         f.write(f"  Radial Coefficients: {results[cam_name]['coeffs']}\n")
-                #         if results[cam_name]['pers_coef'] is not None:
-                #             f.write(f"  Perspective Coefficients: {results[cam_name]['pers_coef']}\n")
-                #         else:
-                #             f.write(f"  Perspective Coefficients: Not calculated\n")
-                #         f.write(f"  Image size: {gray.shape}\n\n")
                   
                 print(f"\n=== {cam_name} PROCESSING COMPLETE ===")
-                print(f"Camera ({cam_name}):  Center: ({results[cam_name]['xcenter']:.4f}, {results[cam_name]['ycenter']:.4f})")
-                print(f"                Radial Coeffs: {results[cam_name]['coeffs']}")
-                if results[cam_name]['pers_coef'] is not None:
+                print(f"Camera ({cam_name}):  Center: ({results['xcenter']:.4f}, {results['ycenter']:.4f})")
+                print(f"                Radial Coeffs: {results['coeffs']}")
+                if results['pers_coef'] is not None:
                     print(f"                Perspective: Available")
                 else:
                     print(f"                Perspective: Failed/Skipped") 

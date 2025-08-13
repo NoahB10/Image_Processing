@@ -85,7 +85,7 @@ class DualImagePostProcessor:
                     print("File not found:", coeff_file)
                     return
                     
-                    
+                
                 # Update distortion parameters with loaded data
                 keys = ['xcenter', 'ycenter', 'coeffs', 'pers_coef', 'rotation_angle']
                 for cam in ['cam0', 'cam1', 'cam2', 'cam3', 'cam4', 'cam5', 'cam6', 'cam7']:
@@ -271,7 +271,7 @@ class DualImagePostProcessor:
             return image
             
         rotation_angle = self.distortion_params[cam_name]['rotation_angle']
-        
+
         try:
             # Get image dimensions
             height, width = image.shape[:2]
